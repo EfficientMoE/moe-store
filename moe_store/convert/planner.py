@@ -80,11 +80,16 @@ def plan_layout(
     model_type: str,
     checkpoint_name: str,
     partition_size: int = DEFAULT_PARTITION_SIZE,
+    slot_rank=None,
 ) -> StoreIndex:
     """Build a validated v2 StoreIndex.
 
     ``expert_of(name) -> (layer_id, expert_id) | (None, None)`` is
     typically ``functools.partial(parse_expert_id, config=config)``.
+    ``slot_rank(name) -> int | None`` optionally supplies the canonical
+    G3 slot rank; expert members sort stably by it (scan order breaks
+    ties and is the fallback), normalizing v4 and v5 checkpoints to the
+    same positional layout.
     """
     expert_groups: dict[tuple[int, int], list[TensorSpec]] = {}
     stage_order: list[tuple[str, bool, object]] = []
@@ -177,9 +182,17 @@ def plan_layout(
                 eid for (lid, eid) in expert_groups if lid == layer_id
             )
             for group_idx, expert_id in enumerate(expert_ids):
+                members = expert_groups[(layer_id, expert_id)]
+                if slot_rank is not None:
+                    ranked = [
+                        (slot_rank(spec.name), idx)
+                        for idx, spec in enumerate(members)
+                    ]
+                    if all(rank is not None for rank, _ in ranked):
+                        members = [members[idx] for _, idx in sorted(ranked)]
                 groups.append(
                     place_group(
-                        expert_groups[(layer_id, expert_id)],
+                        members,
                         stage_idx=stage_idx,
                         group_idx=group_idx,
                         is_last_stage=is_last,

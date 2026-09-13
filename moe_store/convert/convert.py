@@ -93,9 +93,26 @@ def convert_checkpoint(
     config = AutoConfig.from_pretrained(ckpt_dir, trust_remote_code=True)
     shards = _ShardedCheckpoint(ckpt_dir)
 
+    from moe_store.convert.v5_remap import V5Expansion
+    from moe_store.registry.slots import member_slot_rank
+
+    expansion = V5Expansion(config, shards.spec)
     expert_of = functools.partial(parse_expert_id, config=config)
-    names = shards.names()
-    specs = [shards.spec(name) for name in tqdm(names, desc="scan")]
+    arch = (getattr(config, "architectures", None) or [""])[0] or getattr(
+        config, "model_type", ""
+    )
+
+    names = expansion.expand_names(shards.names())
+
+    def spec_of(name: str) -> TensorSpec:
+        virtual = expansion.spec(name)
+        return virtual if virtual is not None else shards.spec(name)
+
+    def load(name: str) -> torch.Tensor:
+        virtual = expansion.load(name, shards.load)
+        return virtual if virtual is not None else shards.load(name)
+
+    specs = [spec_of(name) for name in tqdm(names, desc="scan")]
 
     index = plan_layout(
         specs,
@@ -103,8 +120,9 @@ def convert_checkpoint(
         model_type=getattr(config, "model_type", "unknown"),
         checkpoint_name=str(checkpoint),
         partition_size=partition_size,
+        slot_rank=functools.partial(member_slot_rank, arch),
     )
-    write_store(index, shards.load, store_dir)
+    write_store(index, load, store_dir)
     return index
 
 

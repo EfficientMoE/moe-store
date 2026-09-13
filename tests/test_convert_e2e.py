@@ -41,9 +41,7 @@ def _write_tiny_mixtral_checkpoint(ckpt_dir):
     state = {"model.embed_tokens.weight": torch.randn(128, HIDDEN)}
     for layer in range(NUM_LAYERS):
         prefix = f"model.layers.{layer}"
-        state[f"{prefix}.self_attn.q_proj.weight"] = torch.randn(
-            HIDDEN, HIDDEN
-        )
+        state[f"{prefix}.self_attn.q_proj.weight"] = torch.randn(HIDDEN, HIDDEN)
         state[f"{prefix}.block_sparse_moe.gate.weight"] = torch.randn(
             NUM_EXPERTS, HIDDEN
         )
