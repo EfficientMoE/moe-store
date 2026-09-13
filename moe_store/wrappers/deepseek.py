@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# PR3: injected via EngineHooks
+from moe_store.hooks import require_op
 
 
 class DeepseekMoEGate(nn.Module):
@@ -115,7 +115,7 @@ class DeepseekMoEBlock(nn.Module):
                 )
             routing_weights = routing_weights.to(torch.float32)
         else:
-            router_mask, routing_weights_mask = self.kernel_topk_softmax(
+            router_mask, routing_weights_mask = require_op("topk_softmax")(
                 gate_output,
                 self.num_experts_per_tok,
                 self.num_expert,

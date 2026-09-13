@@ -4,6 +4,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from moe_store.hooks import ops, require_op
+
 
 class _PackedExperts(nn.Module):
     def __init__(self, config):
@@ -91,8 +93,7 @@ class SyncGptOssMLP(nn.Module):
     def _expert_forward_mxfp4(
         self, hidden_states: torch.Tensor, expert_idx: int
     ) -> torch.Tensor:
-        # PR3: injected via EngineHooks
-        fused_mxfp4_gemm = self.fused_mxfp4_gemm
+        fused_mxfp4_gemm = require_op("fused_mxfp4_gemm")
 
         device = hidden_states.device
         x = hidden_states.to(torch.bfloat16)
@@ -130,10 +131,9 @@ class SyncGptOssMLP(nn.Module):
         if self.expert_executor is not None:
             return
 
-        # PR3: injected via EngineHooks
-        route_ahead_ctx = self.route_ahead_ctx
+        route_ahead_ctx = ops.route_ahead_ctx
 
-        if not route_ahead_ctx.is_active():
+        if route_ahead_ctx is None or not route_ahead_ctx.is_active():
             return
 
         stats = route_ahead_ctx.current_stats()
@@ -141,8 +141,7 @@ class SyncGptOssMLP(nn.Module):
         if stats is None:
             return
 
-        # PR3: injected via EngineHooks
-        union_experts_from_mask = self.union_experts_from_mask
+        union_experts_from_mask = require_op("union_experts_from_mask")
 
         mask_2d = router_mask.reshape(-1, self.num_experts)
         union_expert_ids = union_experts_from_mask(mask_2d)
@@ -151,8 +150,7 @@ class SyncGptOssMLP(nn.Module):
     def forward(
         self, hidden_states: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        # PR3: injected via EngineHooks
-        nvtx_phase = self.nvtx_phase
+        nvtx_phase = ops.nvtx_phase
 
         batch_size, sequence_length, hidden_dim = hidden_states.shape
         num_tokens = batch_size * sequence_length

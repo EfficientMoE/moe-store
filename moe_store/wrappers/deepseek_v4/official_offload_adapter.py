@@ -144,8 +144,9 @@ _V4_FP4 = None
 def _load_native_fp4():
     global _V4_FP4
     if _V4_FP4 is None:
-        # PR3: injected via EngineHooks
-        raise RuntimeError("native FP4 extension has not been injected")
+        from moe_store.hooks import require_op
+
+        _V4_FP4 = require_op("v4_fp4_ext")
     return _V4_FP4
 
 
