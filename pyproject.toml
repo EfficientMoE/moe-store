@@ -31,7 +31,7 @@ Repository = "https://github.com/EfficientMoE/moe-store"
 packages = { find = { include = ["moe_store*"] } }
 
 [tool.setuptools.package-data]
-moe_store = ["py.typed"]
+moe_store = ["py.typed", "csrc/store/*.h", "csrc/store/*.cc", "csrc/store/CMakeLists.txt"]
 
 [tool.setuptools_scm]
 version_file = "moe_store/_version.py"

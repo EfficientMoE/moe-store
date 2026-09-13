@@ -16,7 +16,7 @@ moe-store owns everything that knows about model architectures:
   `parse_expert_dtype` for every supported architecture.
 - **Model wrappers**: `Sync*` MoE block replacements that talk to the
   offloading engine exclusively through the `EngineHooks` protocol.
-- **Store C++ sources** (`csrc/store/`): the async-I/O read path and v2 index
+- **Store C++ sources** (`moe_store/csrc/store/`): the async-I/O read path and v2 index
   consumed by MoE-Infinity as a build-time source dependency.
 
 MoE-Infinity depends on moe-store; moe-store never imports MoE-Infinity.
