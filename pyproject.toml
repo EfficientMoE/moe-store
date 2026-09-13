@@ -1,0 +1,69 @@
+[build-system]
+requires = ["setuptools>=75.3.2", "setuptools-scm>=8", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "moe-store"
+description = "Checkpoint conversion, model registry, and arch-aware tensor store for MoE-Infinity"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dynamic = ["version"]
+dependencies = [
+    "torch>=2.0",
+    "transformers>=4.40",
+    "safetensors>=0.4",
+    "numpy",
+    "tqdm",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-timeout", "ruff", "pre-commit", "mypy"]
+
+[project.scripts]
+moe-store = "moe_store.cli:main"
+
+[project.urls]
+Repository = "https://github.com/EfficientMoE/moe-store"
+
+[tool.setuptools]
+packages = { find = { include = ["moe_store*"] } }
+
+[tool.setuptools.package-data]
+moe_store = ["py.typed"]
+
+[tool.setuptools_scm]
+version_file = "moe_store/_version.py"
+local_scheme = "no-local-version"
+fallback_version = "0.0.0"
+
+[tool.ruff]
+line-length = 80
+exclude = []
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.ruff.lint]
+fixable = ["ALL"]
+unfixable = ["F405", "F403", "E731", "B007", "B904", "UP032"]
+select = ["I"]
+ignore = ["B007"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+    "slow: long-running test (> 60s)",
+    "network: requires external network or HuggingFace Hub",
+]
+
+[tool.mypy]
+files = ["moe_store/parsing/hf_config.py"]
+follow_imports = "skip"
+python_version = "3.10"
+ignore_missing_imports = true
+warn_unused_ignores = true
+check_untyped_defs = false
+disallow_untyped_defs = false
+disable_error_code = ["assignment"]
