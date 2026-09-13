@@ -15,6 +15,7 @@ dependencies = [
     "safetensors>=0.4",
     "numpy",
     "tqdm",
+    "nvtx",
 ]
 
 [project.optional-dependencies]
