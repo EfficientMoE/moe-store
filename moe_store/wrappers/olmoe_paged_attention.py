@@ -121,9 +121,7 @@ class OlmoePagedAttention(OlmoeAttention):
         query_states = cast(
             torch.Tensor, self.q_norm(self.q_proj(hidden_states))
         )
-        key_states = cast(
-            torch.Tensor, self.k_norm(self.k_proj(hidden_states))
-        )
+        key_states = cast(torch.Tensor, self.k_norm(self.k_proj(hidden_states)))
         value_states = cast(torch.Tensor, self.v_proj(hidden_states))
 
         clip_qkv = getattr(self.config, "clip_qkv", None)
