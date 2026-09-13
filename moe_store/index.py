@@ -21,7 +21,8 @@ MAGIC = b"MOESTOR2"
 VERSION = 2
 DEFAULT_PARTITION_SIZE = 10 * 1024 * 1024 * 1024
 GROUP_ALIGNMENT = 4096
-MEMBER_ALIGNMENT = 64
+MEMBER_ALIGNMENT = 4096
+MEMBER_ALIGNMENT_MIN = 64
 END_OF_PIPELINE = 0xFFFFFFFF
 
 INDEX_FILE_NAME = "store_index"
@@ -254,7 +255,7 @@ def validate_index(index: StoreIndex) -> None:
             raise ValueError(f"empty group {group.group_id:#x}")
         cursor = 0
         for member in group.members:
-            if member.rel_offset % MEMBER_ALIGNMENT != 0:
+            if member.rel_offset % MEMBER_ALIGNMENT_MIN != 0:
                 raise ValueError(
                     f"G2 violation: member {member.name} rel_offset"
                 )

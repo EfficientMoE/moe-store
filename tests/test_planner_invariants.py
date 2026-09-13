@@ -159,7 +159,7 @@ def test_g4_quantized_members_share_group(case):
 
 
 def test_g1_partition_roll_keeps_groups_whole(case):
-    tiny_partition = 8192
+    tiny_partition = 65536
     index = _plan(case, partition_size=tiny_partition)
     for group in index.groups:
         assert group.offset + group.total_size <= tiny_partition

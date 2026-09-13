@@ -36,7 +36,7 @@ dense binary blobs with no headers; all structure lives in `store_index`.
 | # | Invariant (MUST) |
 |---|---|
 | G1 | A group never straddles a partition file: `offset + total_size <= partition_size` for its file. The writer rolls to a new partition before writing a group that would not fit. A single group larger than `partition_size` is a conversion error. |
-| G2 | `offset % 4096 == 0` for every group start (O_DIRECT requirement). Members are packed back-to-back inside the group at 64-byte relative alignment; `rel_offset % 64 == 0`. |
+| G2 | `offset % 4096 == 0` for every group start (O_DIRECT requirement). Members are packed back-to-back inside the group at the writer's member alignment; readers MUST accept any `rel_offset % 64 == 0`. The current writer emits 4096-byte member alignment so per-member strides equal the engine's 4KiB aligned-size math; a future writer may tighten to 64 without a format bump. |
 | G3 | Members of an expert group appear in **architecture slot order** as defined by the registry (e.g. `[gate/w1, up/w3, down/w2]` for Mixtral-family experts). Readers MUST NOT sort members. Dense group members appear in the canonical order recorded in the index. |
 | G4 | Quantized experts (FP8 block scales, FP4/MXFP4 blocks+scales, GPTQ/AWQ packed tensors) keep every member of one expert in one group, with each scale/aux tensor immediately following its weight tensor in slot order. |
 | G5 | `tensor_id`s are assigned in group order, members in slot order: the k-th member of the g-th group has a strictly larger id than every tensor of groups 0..g-1. Ids are dense (0..N-1). |
