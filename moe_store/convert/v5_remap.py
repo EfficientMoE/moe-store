@@ -145,3 +145,68 @@ class V5Expansion:
             return row.contiguous()
         gate, up = row.chunk(2, dim=0)
         return (gate if member.part == "gate" else up).contiguous()
+
+
+class GptOssExpansion:
+    """Lazy per-expert expansion of GPT-OSS packed MXFP4 expert tensors,
+    mirroring the engine's legacy ``_expand_gpt_oss_packed_experts``:
+    each of the six packed components ``[E, ...]`` expands independently
+    per expert, and 3D ``_blocks`` payloads ``[out, n_blocks, 16]``
+    collapse to 2D ``[out, n_blocks*16]`` as the fused MoEMLP path
+    expects."""
+
+    def __init__(self, config, spec_of: Callable[[str], TensorSpec]):
+        from moe_store.registry.slots import GPT_OSS_EXPERT_FIELDS
+
+        self._enabled = getattr(config, "model_type", "") == "gpt_oss"
+        self._fields = set(GPT_OSS_EXPERT_FIELDS)
+        self._num_experts = (
+            int(getattr(config, "num_local_experts", 0)) if self._enabled else 0
+        )
+        self._spec_of = spec_of
+        self._virtual: dict[str, tuple[str, int]] = {}
+
+    def expand_names(self, names: list[str]) -> list[str]:
+        if not self._enabled:
+            return names
+        out: list[str] = []
+        for name in names:
+            field = name.rsplit(".", 1)[-1]
+            if ".mlp.experts." not in name or field not in self._fields:
+                out.append(name)
+                continue
+            spec = self._spec_of(name)
+            if spec.shape[0] != self._num_experts:
+                raise ValueError(
+                    f"{name} has {spec.shape[0]} experts; expected "
+                    f"{self._num_experts}"
+                )
+            prefix = name.rsplit(".", 1)[0]
+            for expert in range(self._num_experts):
+                virtual = f"{prefix}.{expert}.{field}"
+                self._virtual[virtual] = (name, expert)
+                out.append(virtual)
+        return out
+
+    def spec(self, name: str) -> TensorSpec | None:
+        entry = self._virtual.get(name)
+        if entry is None:
+            return None
+        source, _expert = entry
+        src = self._spec_of(source)
+        shape = tuple(src.shape[1:])
+        if name.endswith("_blocks") and len(shape) == 3:
+            shape = (shape[0], shape[1] * shape[2])
+        return TensorSpec(name, src.nbytes // src.shape[0], src.dtype, shape)
+
+    def load(
+        self, name: str, base_load: Callable[[str], torch.Tensor]
+    ) -> torch.Tensor | None:
+        entry = self._virtual.get(name)
+        if entry is None:
+            return None
+        source, expert = entry
+        view = base_load(source)[expert]
+        if name.endswith("_blocks") and view.dim() == 3:
+            view = view.reshape(view.shape[0], -1)
+        return view.contiguous()

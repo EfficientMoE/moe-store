@@ -93,24 +93,31 @@ def convert_checkpoint(
     config = AutoConfig.from_pretrained(ckpt_dir, trust_remote_code=True)
     shards = _ShardedCheckpoint(ckpt_dir)
 
-    from moe_store.convert.v5_remap import V5Expansion
+    from moe_store.convert.cast_policy import CastPolicy
+    from moe_store.convert.v5_remap import GptOssExpansion, V5Expansion
     from moe_store.registry.slots import member_slot_rank
 
+    policy = CastPolicy.from_config(config, str(ckpt_dir))
     expansion = V5Expansion(config, shards.spec)
+    gpt_oss = GptOssExpansion(config, shards.spec)
     expert_of = functools.partial(parse_expert_id, config=config)
     arch = (getattr(config, "architectures", None) or [""])[0] or getattr(
         config, "model_type", ""
     )
 
-    names = expansion.expand_names(shards.names())
+    names = gpt_oss.expand_names(expansion.expand_names(shards.names()))
 
     def spec_of(name: str) -> TensorSpec:
-        virtual = expansion.spec(name)
-        return virtual if virtual is not None else shards.spec(name)
+        raw = expansion.spec(name) or gpt_oss.spec(name) or shards.spec(name)
+        return policy.apply_to_spec(raw, getattr(torch, raw.dtype))
 
     def load(name: str) -> torch.Tensor:
-        virtual = expansion.load(name, shards.load)
-        return virtual if virtual is not None else shards.load(name)
+        tensor = expansion.load(name, shards.load)
+        if tensor is None:
+            tensor = gpt_oss.load(name, shards.load)
+        if tensor is None:
+            tensor = shards.load(name)
+        return policy.apply_to_tensor(name, tensor)
 
     specs = [spec_of(name) for name in tqdm(names, desc="scan")]
 
