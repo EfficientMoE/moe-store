@@ -29,7 +29,7 @@ def _resolve_checkpoint_dir(checkpoint: str) -> Path:
 
     return Path(
         snapshot_download(
-            checkpoint, allow_patterns=["*.safetensors*", "*.json"]
+            checkpoint, allow_patterns=["*.safetensors*", "*.json", "*.py"]
         )
     )
 
