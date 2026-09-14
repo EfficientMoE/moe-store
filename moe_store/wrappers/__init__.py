@@ -21,6 +21,8 @@ from .nllb_moe import SyncNllbMoeSparseMLP
 from .olmoe import SyncOlmoeMoEBlock
 from .qwen import Qwen3MoEBlock
 from .qwen3_5_moe import SyncQwen3_5MoeSparseMoeBlock
+from .qwen3_omni_moe import SyncQwen3OmniMoeThinkerTextSparseMoeBlock
+from .qwen3_vl_moe import SyncQwen3VLMoeTextSparseMoeBlock
 
 # Qwen3PagedAttention / Deepseek*PagedAttention are lazily imported to avoid a
 # circular dependency: model_offload -> moe_store.wrappers -> *_paged_attention
@@ -42,6 +44,8 @@ __all__ = [
     "SyncMixtralSparseMoeBlock",
     "SyncNllbMoeSparseMLP",
     "SyncOlmoeMoEBlock",
+    "SyncQwen3OmniMoeThinkerTextSparseMoeBlock",
+    "SyncQwen3VLMoeTextSparseMoeBlock",
     "SyncQwen3_5MoeSparseMoeBlock",
     "apply_rotary_pos_emb",
     "apply_rotary_pos_emb_deepseek",
