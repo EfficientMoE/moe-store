@@ -31,6 +31,10 @@ dense binary blobs with no headers; all structure lives in `store_index`.
   low32 = stage index)`; the last stage uses `0xFFFFFFFF` as the high32
   end-of-pipeline marker. This mirrors the engine's `corr_id` convention.
 
+A store MAY contain zero expert groups: dense models (e.g. diffusion
+transformers such as Qwen-Image or MiniMax-H3) convert to dense groups
+only, and readers MUST NOT assume at least one sparse stage exists.
+
 ## 3. Layout invariants
 
 | # | Invariant (MUST) |
@@ -57,7 +61,7 @@ All integers little-endian. Strings are `uint16 length` + UTF-8 bytes.
 | version | u32 | `2` |
 | flags | u32 | reserved, `0` |
 | partition_size | u64 | bytes, default `10737418240` (10 GiB) |
-| model_type | string | HF `config.model_type` of the source checkpoint |
+| model_type | string | HF `config.model_type` of the source checkpoint; for dense diffusion components (no `model_type` key) the diffusers `_class_name`, e.g. `QwenImageTransformer2DModel` |
 | checkpoint_name | string | source checkpoint id/path (informational) |
 | num_stages | u32 | number of pipeline stages |
 | num_groups | u64 | total groups |
