@@ -12,7 +12,9 @@ from transformers import PretrainedConfig
 import moe_store.registry.constants as constants
 from moe_store.parsing.hf_config import parse_expert_id, parse_moe_param
 
-FIXTURE = Path(__file__).parent / "fixtures" / "deepseek_v41_flash" / "config.json"
+FIXTURE = (
+    Path(__file__).parent / "fixtures" / "deepseek_v41_flash" / "config.json"
+)
 
 
 @pytest.fixture()
