@@ -151,6 +151,12 @@ def parse_moe_param(config: PretrainedConfig) -> Tuple[int, int, int]:
         num_decoder_layers = text.num_hidden_layers
         num_layers = text.num_hidden_layers
         num_experts = text.n_routed_experts
+    elif "deepseekv41" in arch:
+        text = moe_text_config(config)
+        num_encoder_layers = 0
+        num_decoder_layers = text.num_hidden_layers
+        num_layers = text.num_hidden_layers
+        num_experts = text.n_routed_experts
     elif "deepseek" in arch:
         num_encoder_layers = 0
         num_decoder_layers = config.num_hidden_layers
@@ -201,6 +207,17 @@ def parse_expert_id(
         result = re.findall(
             r"layers\.(\d+)\.block_sparse_moe\.experts\.(\d+)\.", param_name
         )
+        if result:
+            layer_id, expert_id = result[0]
+            layer_id = int(layer_id)
+            expert_id = int(expert_id)
+    elif "deepseekv41" in arch:
+        decoder_sparse_step = 1
+        layer_type = "decoder"
+
+        # The V4.1 checkpoint key layout is UNCONFIRMED. Reuse the V4 pattern
+        # until it can be checked against real safetensors shards.
+        result = re.findall(r"layers\.(\d+)\.ffn\.experts\.(\d+)\.", param_name)
         if result:
             layer_id, expert_id = result[0]
             layer_id = int(layer_id)
