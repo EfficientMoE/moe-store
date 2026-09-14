@@ -23,6 +23,12 @@ def main(argv: list[str] | None = None) -> int:
     convert.add_argument(
         "--partition-size", type=int, default=DEFAULT_PARTITION_SIZE
     )
+    convert.add_argument(
+        "--subfolder",
+        default=None,
+        help="pipeline component to convert, e.g. transformer or "
+        "FL2VA/transformer",
+    )
 
     inspect = sub.add_parser("inspect", help="print v2 store summary")
     inspect.add_argument("store_dir")
@@ -37,6 +43,7 @@ def main(argv: list[str] | None = None) -> int:
             args.checkpoint,
             args.store_dir,
             partition_size=args.partition_size,
+            subfolder=args.subfolder,
         )
         print(
             f"converted {args.checkpoint}: {len(index.groups)} groups, "

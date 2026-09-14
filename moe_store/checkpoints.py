@@ -23,6 +23,8 @@ except Exception:
     WEIGHTS_NAME = "pytorch_model.bin"
     SAFE_WEIGHTS_NAME = "model.safetensors"
 
+DIFFUSERS_SAFE_WEIGHTS_NAME = "diffusion_pytorch_model.safetensors"
+
 
 def get_checkpoint_paths(checkpoint: Union[str, os.PathLike]):
     """
@@ -45,7 +47,9 @@ def get_checkpoint_paths(checkpoint: Union[str, os.PathLike]):
             f for f in os.listdir(checkpoint) if f == WEIGHTS_NAME
         ]
         potential_state_safetensor = [
-            f for f in os.listdir(checkpoint) if f == SAFE_WEIGHTS_NAME
+            f
+            for f in os.listdir(checkpoint)
+            if f in (SAFE_WEIGHTS_NAME, DIFFUSERS_SAFE_WEIGHTS_NAME)
         ]
         if len(potential_state_bin) == 1:
             checkpoint_files = [
