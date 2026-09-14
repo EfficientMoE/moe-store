@@ -32,6 +32,16 @@ try:
 except ImportError:
     Glm5NextForConditionalGeneration = None
 
+try:
+    from transformers import Qwen3VLMoeForConditionalGeneration
+except ImportError:
+    Qwen3VLMoeForConditionalGeneration = None
+
+try:
+    from transformers import Qwen3OmniMoeForConditionalGeneration
+except ImportError:
+    Qwen3OmniMoeForConditionalGeneration = None
+
 MODEL_MAPPING_NAMES = {
     "nllb": NllbMoeForConditionalGeneration,
     "mixtral": MixtralForCausalLM,
@@ -93,11 +103,48 @@ if Glm5NextForConditionalGeneration is not None:
     MODEL_MAPPING_NAMES["glm5next"] = Glm5NextForConditionalGeneration
     MODEL_MAPPING_TYPES["glm5next"] = 5
 
+# Qwen3-VL-MoE (arch "Qwen3VLMoeForConditionalGeneration") nests its MoE
+# fields under text_config and ships v5 batched expert tensors under
+# `model.language_model.*`; experts expand to per-expert gate_proj/up_proj/
+# down_proj (expert-type 5). The vision tower (`model.visual.*`) stays
+# resident. Registered only when the HF class is importable (mirrors the
+# guards above).
+if Qwen3VLMoeForConditionalGeneration is not None:
+    MODEL_MAPPING_NAMES["qwen3vlmoe"] = Qwen3VLMoeForConditionalGeneration
+    MODEL_MAPPING_TYPES["qwen3vlmoe"] = 5
+
+# Qwen3-Omni-MoE (arch "Qwen3OmniMoeForConditionalGeneration") nests its
+# offloadable MoE under thinker_config.text_config with per-expert
+# gate_proj/up_proj/down_proj weights (expert-type 5). The talker MoE,
+# vision tower, and code2wav stacks stay resident. Registered only when
+# the HF class is importable (mirrors the guards above).
+if Qwen3OmniMoeForConditionalGeneration is not None:
+    MODEL_MAPPING_NAMES["qwen3omnimoe"] = Qwen3OmniMoeForConditionalGeneration
+    MODEL_MAPPING_TYPES["qwen3omnimoe"] = 5
+
+
+# Dense diffusion transformers (diffusers-style `_class_name` configs) have
+# no MoE experts: every tensor is stored in dense groups and the expert type
+# is DENSE_EXPERT_TYPE. Matching is substring-based on the lowered class
+# name, like MODEL_MAPPING_NAMES keys.
+DENSE_EXPERT_TYPE = 0
+DENSE_MODEL_CLASSES = (
+    "QwenImageTransformer2DModel",
+    "MiniMaxH3Transformer3DModel",
+)
+
+
+def is_dense_architecture(architecture: str) -> bool:
+    arch = architecture.lower()
+    return any(cls.lower() in arch for cls in DENSE_MODEL_CLASSES)
+
 
 def parse_expert_type(config: PretrainedConfig) -> int:
     architecture = (
         config.architectures[0].lower() if config.architectures else ""
     )
+    if is_dense_architecture(architecture):
+        return DENSE_EXPERT_TYPE
     arch = None
     # Match the most specific key first: "qwen3_5" and "deepseek_v3" both
     # contain shorter keys ("qwen3", "deepseek") as substrings, so longest-key

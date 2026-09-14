@@ -88,6 +88,20 @@ def moe_text_config(config: PretrainedConfig) -> PretrainedConfig:
     return text
 
 
+def _thinker_text_config(config: PretrainedConfig) -> PretrainedConfig:
+    # Qwen3-Omni-MoE nests its offloadable MoE (the thinker LLM) under
+    # thinker_config.text_config; the talker MoE and code2wav stacks stay
+    # resident. Sub-configs may be plain dicts when the modeling class is
+    # not importable, same normalization as moe_text_config.
+    thinker = getattr(config, "thinker_config", config)
+    if isinstance(thinker, dict):
+        thinker = PretrainedConfig.from_dict(thinker)
+    text = getattr(thinker, "text_config", thinker)
+    if isinstance(text, dict):
+        text = PretrainedConfig.from_dict(text)
+    return text
+
+
 def parse_moe_param(config: PretrainedConfig) -> Tuple[int, int, int]:
     arch = (config.architectures or [""])[0].lower()
 
@@ -105,6 +119,18 @@ def parse_moe_param(config: PretrainedConfig) -> Tuple[int, int, int]:
         num_experts = config.num_local_experts
     elif "qwen3_5" in arch:
         text = moe_text_config(config)
+        num_encoder_layers = 0
+        num_decoder_layers = text.num_hidden_layers
+        num_layers = text.num_hidden_layers
+        num_experts = text.num_experts
+    elif "qwen3vlmoe" in arch:
+        text = moe_text_config(config)
+        num_encoder_layers = 0
+        num_decoder_layers = text.num_hidden_layers
+        num_layers = text.num_hidden_layers
+        num_experts = text.num_experts
+    elif "qwen3omnimoe" in arch:
+        text = _thinker_text_config(config)
         num_encoder_layers = 0
         num_decoder_layers = text.num_hidden_layers
         num_layers = text.num_hidden_layers
@@ -198,6 +224,36 @@ def parse_expert_id(
         # e.g. "model.language_model.layers.13.mlp.experts.7.gate_proj.weight"
         result = re.findall(
             r"language_model\.layers\.(\d+)\.mlp\.experts\.(\d+)\.", param_name
+        )
+        if result:
+            layer_id, expert_id = result[0]
+            layer_id = int(layer_id)
+            expert_id = int(expert_id)
+    elif "qwen3vlmoe" in arch:
+        decoder_sparse_step = 1
+        layer_type = "decoder"
+
+        # per-expert keys after the v5 batched-expert expand; anchored on
+        # language_model to exclude the vision tower (`model.visual.*`).
+        # e.g. "model.language_model.layers.1.mlp.experts.0.gate_proj.weight"
+        result = re.findall(
+            r"language_model\.layers\.(\d+)\.mlp\.experts\.(\d+)\.", param_name
+        )
+        if result:
+            layer_id, expert_id = result[0]
+            layer_id = int(layer_id)
+            expert_id = int(expert_id)
+    elif "qwen3omnimoe" in arch:
+        decoder_sparse_step = 1
+        layer_type = "decoder"
+
+        # anchored on the thinker LLM; talker experts
+        # (`talker.model.layers.*.mlp.experts.*`), vision, and code2wav
+        # tensors stay resident as dense groups.
+        # e.g. "thinker.model.layers.1.mlp.experts.0.gate_proj.weight"
+        result = re.findall(
+            r"^thinker\.model\.layers\.(\d+)\.mlp\.experts\.(\d+)\.",
+            param_name,
         )
         if result:
             layer_id, expert_id = result[0]
