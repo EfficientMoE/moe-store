@@ -34,6 +34,25 @@ moe-store convert deepseek-ai/DeepSeek-V2-Lite-Chat /ssd/stores/dsv2-lite
 moe-store inspect /ssd/stores/dsv2-lite
 ```
 
+Multimodal MoE checkpoints (Qwen3-VL-MoE, Qwen3-Omni-MoE) convert the same
+way; resident towers (vision, audio, Omni talker) land in dense groups while
+the routed experts get one group per `(layer, expert)`:
+
+```bash
+moe-store convert Qwen/Qwen3-VL-235B-A22B-Instruct /ssd/stores/qwen3-vl
+moe-store convert Qwen/Qwen3-Omni-30B-A3B-Instruct /ssd/stores/qwen3-omni
+```
+
+Dense diffusion transformers (diffusers-style `_class_name` configs) are
+stored as dense groups only. Pipeline repos auto-descend into `transformer/`;
+multi-variant pipelines need `--subfolder`:
+
+```bash
+moe-store convert Qwen/Qwen-Image-2512 /ssd/stores/qwen-image
+moe-store convert MiniMaxAI/MiniMax-H3 /ssd/stores/minimax-h3 \
+    --subfolder FL2VA/transformer
+```
+
 ## Layout guarantees (v2)
 
 | Invariant | Meaning |

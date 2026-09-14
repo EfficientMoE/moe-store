@@ -20,18 +20,71 @@ from moe_store.convert.writer import write_store
 from moe_store.index import DEFAULT_PARTITION_SIZE, StoreIndex
 from moe_store.parsing.hf_config import parse_expert_id
 
+_PIPELINE_INDEX_FILES = ("model_index.json", "modular_model_index.json")
 
-def _resolve_checkpoint_dir(checkpoint: str) -> Path:
+
+def _resolve_checkpoint_dir(
+    checkpoint: str, subfolder: str | None = None
+) -> Path:
     path = Path(checkpoint)
-    if path.exists():
-        return path
-    from huggingface_hub import snapshot_download
+    if not path.exists():
+        from huggingface_hub import snapshot_download
 
-    return Path(
-        snapshot_download(
-            checkpoint, allow_patterns=["*.safetensors*", "*.json", "*.py"]
+        path = Path(
+            snapshot_download(
+                checkpoint, allow_patterns=["*.safetensors*", "*.json", "*.py"]
+            )
         )
-    )
+    if subfolder is not None:
+        sub = path / subfolder
+        if not sub.is_dir():
+            raise ValueError(
+                f"subfolder {subfolder!r} not found under {checkpoint}"
+            )
+        return sub
+    if any((path / name).is_file() for name in _PIPELINE_INDEX_FILES):
+        transformer = path / "transformer"
+        if transformer.is_dir():
+            return transformer
+        candidates = sorted(
+            str(p.relative_to(path))
+            for p in path.glob("*/transformer")
+            if p.is_dir()
+        )
+        raise ValueError(
+            f"{checkpoint} is a multi-component pipeline without a top-level "
+            f"transformer/ component; pass --subfolder, e.g. one of "
+            f"{candidates}"
+        )
+    return path
+
+
+def _load_config(ckpt_dir: Path):
+    config_path = ckpt_dir / "config.json"
+    if config_path.is_file():
+        raw = json.loads(config_path.read_text())
+        class_name = raw.get("_class_name")
+        if class_name:
+            # diffusers component config: no `architectures`/`model_type`
+            # keys and not loadable through AutoConfig. Normalize into a
+            # PretrainedConfig so the parsing/cast helpers see the usual
+            # attribute surface.
+            from transformers import PretrainedConfig
+
+            attrs = {
+                key: value
+                for key, value in raw.items()
+                if not key.startswith("_")
+            }
+            config = PretrainedConfig(**attrs)
+            config.architectures = [class_name]
+            config.model_type = class_name
+            return config
+    return AutoConfig.from_pretrained(ckpt_dir, trust_remote_code=True)
+
+
+def _no_expert(name: str):
+    return (None, None)
 
 
 class _ShardedCheckpoint:
@@ -88,22 +141,27 @@ def convert_checkpoint(
     store_dir: str,
     *,
     partition_size: int = DEFAULT_PARTITION_SIZE,
+    subfolder: str | None = None,
 ) -> StoreIndex:
-    ckpt_dir = _resolve_checkpoint_dir(checkpoint)
-    config = AutoConfig.from_pretrained(ckpt_dir, trust_remote_code=True)
+    ckpt_dir = _resolve_checkpoint_dir(checkpoint, subfolder)
+    config = _load_config(ckpt_dir)
     shards = _ShardedCheckpoint(ckpt_dir)
 
     from moe_store.convert.cast_policy import CastPolicy
     from moe_store.convert.v5_remap import GptOssExpansion, V5Expansion
+    from moe_store.registry.constants import is_dense_architecture
     from moe_store.registry.slots import member_slot_rank
 
     policy = CastPolicy.from_config(config, str(ckpt_dir))
     expansion = V5Expansion(config, shards.spec)
     gpt_oss = GptOssExpansion(config, shards.spec)
-    expert_of = functools.partial(parse_expert_id, config=config)
     arch = (getattr(config, "architectures", None) or [""])[0] or getattr(
         config, "model_type", ""
     )
+    if is_dense_architecture(arch):
+        expert_of = _no_expert
+    else:
+        expert_of = functools.partial(parse_expert_id, config=config)
 
     names = gpt_oss.expand_names(expansion.expand_names(shards.names()))
 
