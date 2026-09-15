@@ -26,7 +26,9 @@ torch = pytest.importorskip("torch")
 modeling = pytest.importorskip("transformers.models.mixtral.modeling_mixtral")
 
 if not hasattr(modeling, "MixtralExperts"):
-    pytest.skip("transformers does not expose MixtralExperts", allow_module_level=True)
+    pytest.skip(
+        "transformers does not expose MixtralExperts", allow_module_level=True
+    )
 
 
 def _config():
