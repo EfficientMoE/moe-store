@@ -113,6 +113,6 @@ def test_routing_matches_hf_dbrx_ffn():
         new_w, new_e = modeling.DbrxFFN.route_tokens_to_experts(
             block, new_logits
         )
-        assert torch.equal(ref_w, new_w) and torch.equal(ref_e, new_e), (
-            "top-k selection differs"
-        )
+        assert torch.equal(ref_w, new_w) and torch.equal(
+            ref_e, new_e
+        ), "top-k selection differs"
