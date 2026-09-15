@@ -102,7 +102,7 @@ class SyncMixtralSparseMoeBlock(nn.Module):
             final_hidden_states = self._forward_gptq(
                 hidden_states, router_logits
             )
-            return final_hidden_states, router_logits
+            return final_hidden_states
 
         hidden_states = hidden_states_flat
 
@@ -135,4 +135,4 @@ class SyncMixtralSparseMoeBlock(nn.Module):
         final_hidden_states = final_hidden_states.view(
             batch_size, sequence_length, hidden_dim
         ).to(hidden_states.dtype)
-        return final_hidden_states, router_logits
+        return final_hidden_states
