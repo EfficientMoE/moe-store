@@ -18,6 +18,11 @@ except ImportError:
     DeepseekV4ForCausalLM = None
 
 try:
+    from transformers import DeepseekV41ForCausalLM
+except ImportError:
+    DeepseekV41ForCausalLM = None
+
+try:
     from transformers import Qwen3_5MoeForConditionalGeneration
 except ImportError:
     Qwen3_5MoeForConditionalGeneration = None
@@ -75,6 +80,12 @@ MODEL_MAPPING_TYPES = {
 if DeepseekV4ForCausalLM is not None:
     MODEL_MAPPING_NAMES["deepseekv4"] = DeepseekV4ForCausalLM
     MODEL_MAPPING_TYPES["deepseekv4"] = 5
+
+# DeepSeek-V4.1 uses the V4 expert family. Register only when transformers
+# provides the modeling class, mirroring the DeepSeek-V4 guard above.
+if DeepseekV41ForCausalLM is not None:
+    MODEL_MAPPING_NAMES["deepseekv41"] = DeepseekV41ForCausalLM
+    MODEL_MAPPING_TYPES["deepseekv41"] = 5
 
 # Qwen3.5-MoE (arch "Qwen3_5MoeForConditionalGeneration") uses per-expert
 # gate_proj/up_proj/down_proj weights (expert-type 5, like Qwen3/DeepSeek); the
