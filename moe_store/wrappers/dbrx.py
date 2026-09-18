@@ -7,7 +7,11 @@ from typing import Dict
 
 import torch
 import torch.nn as nn
-from transformers.models.dbrx.modeling_dbrx import DbrxExperts, DbrxRouter
+from transformers.models.dbrx.modeling_dbrx import (
+    DbrxExperts,
+    DbrxFFN,
+    DbrxRouter,
+)
 
 
 class SyncDbrxFFNBlock(nn.Module):
@@ -17,23 +21,16 @@ class SyncDbrxFFNBlock(nn.Module):
         super().__init__()
         ffn_config = config.ffn_config
 
-        self.router = DbrxRouter(
-            hidden_size=config.d_model,
-            moe_num_experts=ffn_config.moe_num_experts,
-            moe_top_k=ffn_config.moe_top_k,
-            moe_jitter_eps=ffn_config.moe_jitter_eps,
-            moe_normalize_expert_weights=ffn_config.moe_normalize_expert_weights,
-        )
-
-        self.experts = DbrxExperts(
-            hidden_size=config.d_model,
-            ffn_hidden_size=ffn_config.ffn_hidden_size,
-            moe_num_experts=ffn_config.moe_num_experts,
-            ffn_act_fn=ffn_config.ffn_act_fn,
-        )
+        # transformers v5 DbrxRouter/DbrxExperts take the config object itself
+        self.router = DbrxRouter(ffn_config)
+        self.experts = DbrxExperts(ffn_config)
 
         self.num_experts = ffn_config.moe_num_experts
         self.top_k = ffn_config.moe_top_k
+        # route_tokens_to_experts (unbound, from DbrxFFN) reads this attr.
+        self.moe_normalize_expert_weights = (
+            ffn_config.moe_normalize_expert_weights
+        )
         self.hidden_size = config.d_model
 
         self.archer_tracer = None
@@ -43,7 +40,10 @@ class SyncDbrxFFNBlock(nn.Module):
     def forward(self, x: torch.Tensor) -> tuple:
         batch_size, sequence_length, hidden_dim = x.shape
 
-        weights, top_weights, top_experts = self.router(x)
+        weights = self.router(x)
+        top_weights, top_experts = DbrxFFN.route_tokens_to_experts(
+            self, weights
+        )
 
         # Build router_mask and routing_weights_mask for dispatch_local
         # top_experts shape: (batch*seq, top_k); weights shape: (batch*seq, num_experts)
@@ -77,4 +77,4 @@ class SyncDbrxFFNBlock(nn.Module):
         final_hidden_states = final_hidden_states.view(
             batch_size, sequence_length, hidden_dim
         ).to(x.dtype)
-        return final_hidden_states, weights
+        return final_hidden_states
