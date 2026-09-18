@@ -47,6 +47,11 @@ try:
 except ImportError:
     Qwen3OmniMoeForConditionalGeneration = None
 
+try:
+    from transformers import MiniMaxM3SparseForConditionalGeneration
+except ImportError:
+    MiniMaxM3SparseForConditionalGeneration = None
+
 MODEL_MAPPING_NAMES = {
     "nllb": NllbMoeForConditionalGeneration,
     "mixtral": MixtralForCausalLM,
@@ -132,6 +137,17 @@ if Qwen3VLMoeForConditionalGeneration is not None:
 if Qwen3OmniMoeForConditionalGeneration is not None:
     MODEL_MAPPING_NAMES["qwen3omnimoe"] = Qwen3OmniMoeForConditionalGeneration
     MODEL_MAPPING_TYPES["qwen3omnimoe"] = 5
+
+# MiniMax-M3 (arch "MiniMaxM3SparseForConditionalGeneration", model_type
+# "minimax_m3_vl") is a vision-language MoE that nests its MoE fields under
+# text_config and ships v5 batched expert tensors under
+# `model.language_model.*`; experts expand to per-expert gate_proj/up_proj/
+# down_proj (expert-type 5). The vision tower (`model.vision_tower.*`), the
+# multimodal projector, and the shared expert stay resident. Registered only
+# when the HF class is importable (mirrors the guards above).
+if MiniMaxM3SparseForConditionalGeneration is not None:
+    MODEL_MAPPING_NAMES["minimaxm3"] = MiniMaxM3SparseForConditionalGeneration
+    MODEL_MAPPING_TYPES["minimaxm3"] = 5
 
 
 # Dense diffusion transformers (diffusers-style `_class_name` configs) have

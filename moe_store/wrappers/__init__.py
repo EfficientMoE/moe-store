@@ -11,6 +11,7 @@ from .glm5_next import SyncGlm5NextMoEBlock
 from .glm_moe_dsa import SyncGlmMoeDsaMoEBlock
 from .gpt_oss import SyncGptOssMLP
 from .jamba import SyncJambaMoEBlock
+from .minimax_m3_vl import SyncMiniMaxM3VLSparseMoeBlock
 from .mixtral import SyncMixtralSparseMoeBlock
 from .model_utils import (
     apply_rotary_pos_emb,
@@ -42,6 +43,7 @@ __all__ = [
     "SyncGlmMoeDsaMoEBlock",
     "SyncGptOssMLP",
     "SyncJambaMoEBlock",
+    "SyncMiniMaxM3VLSparseMoeBlock",
     "SyncMixtralSparseMoeBlock",
     "SyncNllbMoeSparseMLP",
     "SyncOlmoeMoEBlock",
