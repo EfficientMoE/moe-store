@@ -25,6 +25,16 @@ class SyncDbrxFFNBlock(nn.Module):
         self.router = DbrxRouter(ffn_config)
         self.experts = DbrxExperts(ffn_config)
 
+        # transformers 5.12 regression: DbrxRouter.__init__ sizes its Linear
+        # from config.ffn_hidden_size, but router input is the model hidden
+        # state (d_model; checkpoint router.layer.weight is [E, d_model]).
+        # Rebuild only when the upstream ctor got it wrong.
+        if self.router.layer.in_features != config.d_model:
+            self.router.hidden_size = config.d_model
+            self.router.layer = nn.Linear(
+                config.d_model, ffn_config.moe_num_experts, bias=False
+            )
+
         self.num_experts = ffn_config.moe_num_experts
         self.top_k = ffn_config.moe_top_k
         # route_tokens_to_experts (unbound, from DbrxFFN) reads this attr.

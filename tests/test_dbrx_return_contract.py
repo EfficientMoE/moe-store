@@ -98,6 +98,14 @@ def test_routing_matches_hf_dbrx_ffn():
     block = SyncDbrxFFNBlock(config)
 
     ref = modeling.DbrxFFN(config)
+    # transformers 5.12 sizes DbrxRouter's Linear from ffn_hidden_size; give
+    # the reference the same d_model-shaped router the wrapper guarantees so
+    # this stays a routing-math equivalence check across transformers versions.
+    if ref.router.layer.in_features != config.d_model:
+        ref.router.hidden_size = config.d_model
+        ref.router.layer = torch.nn.Linear(
+            config.d_model, config.ffn_config.moe_num_experts, bias=False
+        )
     with torch.no_grad():
         ref.router.layer.weight.copy_(block.router.layer.weight)
 
