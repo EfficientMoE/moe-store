@@ -148,13 +148,18 @@ def convert_checkpoint(
     shards = _ShardedCheckpoint(ckpt_dir)
 
     from moe_store.convert.cast_policy import CastPolicy
-    from moe_store.convert.v5_remap import GptOssExpansion, V5Expansion
+    from moe_store.convert.v5_remap import (
+        DbrxExpansion,
+        GptOssExpansion,
+        V5Expansion,
+    )
     from moe_store.registry.constants import is_dense_architecture
     from moe_store.registry.slots import member_slot_rank
 
     policy = CastPolicy.from_config(config, str(ckpt_dir))
     expansion = V5Expansion(config, shards.spec)
     gpt_oss = GptOssExpansion(config, shards.spec)
+    dbrx = DbrxExpansion(config, shards.spec)
     arch = (getattr(config, "architectures", None) or [""])[0] or getattr(
         config, "model_type", ""
     )
@@ -163,16 +168,25 @@ def convert_checkpoint(
     else:
         expert_of = functools.partial(parse_expert_id, config=config)
 
-    names = gpt_oss.expand_names(expansion.expand_names(shards.names()))
+    names = dbrx.expand_names(
+        gpt_oss.expand_names(expansion.expand_names(shards.names()))
+    )
 
     def spec_of(name: str) -> TensorSpec:
-        raw = expansion.spec(name) or gpt_oss.spec(name) or shards.spec(name)
+        raw = (
+            expansion.spec(name)
+            or gpt_oss.spec(name)
+            or dbrx.spec(name)
+            or shards.spec(name)
+        )
         return policy.apply_to_spec(raw, getattr(torch, raw.dtype))
 
     def load(name: str) -> torch.Tensor:
         tensor = expansion.load(name, shards.load)
         if tensor is None:
             tensor = gpt_oss.load(name, shards.load)
+        if tensor is None:
+            tensor = dbrx.load(name, shards.load)
         if tensor is None:
             tensor = shards.load(name)
         return policy.apply_to_tensor(name, tensor)

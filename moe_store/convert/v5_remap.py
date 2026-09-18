@@ -147,6 +147,75 @@ class V5Expansion:
         return (gate if member.part == "gate" else up).contiguous()
 
 
+class DbrxExpansion:
+    """Lazy per-expert expansion of DBRX fused expert tensors: each of
+    ``ffn.experts.mlp.{w1,v1,w2}`` is a 2D ``[E * ffn_hidden, d_model]``
+    parameter; expert ``e`` owns the row slice ``[e*ffn : (e+1)*ffn]`` and
+    expands to the virtual name ``ffn.experts.mlp.{e}.{part}``."""
+
+    _PARTS = ("w1", "v1", "w2")
+
+    def __init__(self, config, spec_of: Callable[[str], TensorSpec]):
+        self._enabled = getattr(config, "model_type", "") == "dbrx"
+        num_experts = 0
+        if self._enabled:
+            ffn = getattr(config, "ffn_config", None)
+            if isinstance(ffn, dict):
+                num_experts = ffn.get("moe_num_experts", 0)
+            elif ffn is not None:
+                num_experts = getattr(ffn, "moe_num_experts", 0)
+        self._num_experts = int(num_experts)
+        self._spec_of = spec_of
+        self._virtual: dict[str, tuple[str, int]] = {}
+
+    def expand_names(self, names: list[str]) -> list[str]:
+        if not self._enabled or not self._num_experts:
+            return names
+        out: list[str] = []
+        for name in names:
+            field = name.rsplit(".", 1)[-1]
+            if not name.endswith(
+                tuple(f".ffn.experts.mlp.{part}" for part in self._PARTS)
+            ):
+                out.append(name)
+                continue
+            spec = self._spec_of(name)
+            if spec.shape[0] % self._num_experts != 0:
+                raise ValueError(
+                    f"{name} rows {spec.shape[0]} not divisible by "
+                    f"{self._num_experts} experts"
+                )
+            prefix = name[: -len(field) - 1]
+            for expert in range(self._num_experts):
+                virtual = f"{prefix}.{expert}.{field}"
+                self._virtual[virtual] = (name, expert)
+                out.append(virtual)
+        return out
+
+    def spec(self, name: str) -> TensorSpec | None:
+        entry = self._virtual.get(name)
+        if entry is None:
+            return None
+        source, _expert = entry
+        src = self._spec_of(source)
+        rows = src.shape[0] // self._num_experts
+        shape = (rows, *src.shape[1:])
+        return TensorSpec(
+            name, src.nbytes // self._num_experts, src.dtype, shape
+        )
+
+    def load(
+        self, name: str, base_load: Callable[[str], torch.Tensor]
+    ) -> torch.Tensor | None:
+        entry = self._virtual.get(name)
+        if entry is None:
+            return None
+        source, expert = entry
+        tensor = base_load(source)
+        rows = tensor.shape[0] // self._num_experts
+        return tensor[expert * rows : (expert + 1) * rows].contiguous()
+
+
 class GptOssExpansion:
     """Lazy per-expert expansion of GPT-OSS packed MXFP4 expert tensors,
     mirroring the engine's legacy ``_expand_gpt_oss_packed_experts``:

@@ -30,9 +30,16 @@ _SLOT_TABLES: dict[str, tuple[str, ...]] = {
     "gate_up_down": ("gate_proj", "up_proj", "down_proj"),
     "gpt_oss": GPT_OSS_EXPERT_FIELDS,
     "nllb": ("fc1", "fc2"),
+    # DbrxExpertGLU order: w1 = gate, v1 = up, w2 = down. Safetensors keys
+    # sort alphabetically (v1 < w1), so canonical ranking is required.
+    "dbrx": ("w1", "v1", "w2"),
 }
 
-_EXPERT_SEGMENT = re.compile(r"\bexperts?[._](?:expert_)?(\d+)\.(.+)$")
+# `experts.mlp.` covers DBRX's expanded fused-expert names
+# (`ffn.experts.mlp.{E}.{part}`).
+_EXPERT_SEGMENT = re.compile(
+    r"\bexperts?[._](?:mlp\.)?(?:expert_)?(\d+)\.(.+)$"
+)
 
 
 def slot_table_for_arch(arch: str) -> tuple[str, ...] | None:
@@ -43,9 +50,10 @@ def slot_table_for_arch(arch: str) -> tuple[str, ...] | None:
         return _SLOT_TABLES["gpt_oss"]
     if "nllb" in arch:
         return _SLOT_TABLES["nllb"]
+    if "dbrx" in arch:
+        return _SLOT_TABLES["dbrx"]
     if any(
-        key in arch
-        for key in ("deepseek", "qwen", "olmoe", "glm", "jamba", "dbrx")
+        key in arch for key in ("deepseek", "qwen", "olmoe", "glm", "jamba")
     ):
         return _SLOT_TABLES["gate_up_down"]
     return None

@@ -167,6 +167,35 @@ def parse_moe_param(config: PretrainedConfig) -> Tuple[int, int, int]:
         num_decoder_layers = config.num_hidden_layers
         num_layers = config.num_hidden_layers
         num_experts = config.num_local_experts
+    elif "dbrx" in arch:
+        ffn = config.ffn_config
+        num_encoder_layers = 0
+        num_decoder_layers = config.n_layers
+        num_layers = config.n_layers
+        num_experts = (
+            ffn["moe_num_experts"]
+            if isinstance(ffn, dict)
+            else ffn.moe_num_experts
+        )
+    elif "jamba" in arch:
+        # experts live only on layers with L % period == offset; the store
+        # layer_id space covers just those layers, like the nllb sparse_step.
+        period = config.expert_layer_period
+        offset = config.expert_layer_offset
+        num_encoder_layers = 0
+        num_decoder_layers = sum(
+            1
+            for layer in range(config.num_hidden_layers)
+            if layer % period == offset
+        )
+        num_layers = num_decoder_layers
+        num_experts = config.num_experts
+    elif "opt" in arch:
+        # dense legacy model: no experts, every tensor is resident.
+        num_encoder_layers = 0
+        num_decoder_layers = config.num_hidden_layers
+        num_layers = config.num_hidden_layers
+        num_experts = 0
     else:
         raise RuntimeError(f"Unsupported architecture {arch}")
 
@@ -317,6 +346,35 @@ def parse_expert_id(
             layer_id, expert_id = result[0]
             layer_id = int(layer_id)
             expert_id = int(expert_id)
+    elif "dbrx" in arch:
+        decoder_sparse_step = 1
+        layer_type = "decoder"
+
+        # per-expert keys after the fused-expert expand;
+        # e.g. "transformer.blocks.1.ffn.experts.mlp.2.w1"
+        result = re.findall(
+            r"blocks\.(\d+)\.ffn\.experts\.mlp\.(\d+)\.", param_name
+        )
+        if result:
+            layer_id, expert_id = result[0]
+            layer_id = int(layer_id)
+            expert_id = int(expert_id)
+    elif "jamba" in arch:
+        decoder_sparse_step = 1
+        layer_type = "decoder"
+
+        # example "model.layers.3.feed_forward.experts.2.gate_proj.weight";
+        # checkpoint layer L maps to store layer (L - offset) // period.
+        result = re.findall(
+            r"layers\.(\d+)\.feed_forward\.experts\.(\d+)\.", param_name
+        )
+        if result:
+            raw_layer, expert_id = (int(v) for v in result[0])
+            period = config.expert_layer_period
+            offset = config.expert_layer_offset
+            if raw_layer % period != offset:
+                return None, None
+            layer_id = (raw_layer - offset) // period
     elif "gpt_oss" in arch or "gptoss" in arch:
         layer_type = "decoder"
         result = re.findall(
