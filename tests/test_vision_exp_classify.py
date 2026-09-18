@@ -27,6 +27,20 @@ class _BaseV4Cfg:
     n_routed_experts = 256
 
 
+class _NativeModelArgsCfg:
+    # real AST-extracted ModelArgs shape: num_layers, no num_hidden_layers
+    # (issue #7)
+    num_layers = 43
+    num_nextn_predict_layers = 3
+    n_routed_experts = 256
+    vision_n_layers = 32
+
+
+class _NoLayerFieldsCfg:
+    n_routed_experts = 256
+    vision_n_layers = 32
+
+
 @pytest.mark.parametrize(
     "name,expected",
     [
@@ -95,3 +109,32 @@ def test_should_skip_resident_load_vision_exp(name, text_only, expected_skip):
 )
 def test_should_skip_resident_load_preserves_base_v4(name, expected_skip):
     assert should_skip_resident_load(name, _BaseV4Cfg()) is expected_skip
+
+
+@pytest.mark.parametrize(
+    "name,expected",
+    [
+        ("layers.5.ffn.experts.17.w1.weight", TensorClass.ROUTED_EXPERT),
+        ("layers.42.ffn.experts.255.w3.scale", TensorClass.ROUTED_EXPERT),
+        ("layers.5.ffn.gate.weight", TensorClass.RESIDENT_TEXT),
+        ("mtp.0.attn.wkv.weight", TensorClass.MTP_NEXTN),
+        ("vision.blocks.0.attn.wqkv.weight", TensorClass.RESIDENT_VISION),
+    ],
+)
+def test_classify_native_model_args_num_layers(name, expected):
+    assert classify_vision_exp_tensor(name, _NativeModelArgsCfg()) == expected
+
+
+def test_should_skip_resident_load_native_model_args():
+    cfg = _NativeModelArgsCfg()
+    assert should_skip_resident_load(
+        "layers.5.ffn.experts.17.w1.weight", cfg, text_only=True
+    )
+    assert not should_skip_resident_load("embed.weight", cfg, text_only=True)
+
+
+def test_missing_both_layer_fields_fails_loud():
+    with pytest.raises(AttributeError):
+        classify_vision_exp_tensor(
+            "layers.5.ffn.experts.17.w1.weight", _NoLayerFieldsCfg()
+        )

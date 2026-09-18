@@ -32,15 +32,24 @@ def is_vision_exp_config(config) -> bool:
     return getattr(config, "vision_n_layers", None) is not None
 
 
+def _text_layer_count(config) -> int:
+    # HF-shaped configs expose num_hidden_layers; the native AST-extracted
+    # ModelArgs exposes num_layers (issue #7). Missing both must stay loud.
+    n_layers = getattr(config, "num_hidden_layers", None)
+    if n_layers is None:
+        n_layers = config.num_layers
+    return int(n_layers)
+
+
 def classify_vision_exp_tensor(name: str, config) -> TensorClass:
     if name.startswith(_VISION_PREFIXES) or name in _IMAGE_TOKEN_KEYS:
         return TensorClass.RESIDENT_VISION
     if name.startswith("mtp."):
         return TensorClass.MTP_NEXTN
     expert_match = _EXPERT_RE.match(name)
-    if expert_match is not None and int(expert_match.group(1)) < int(
-        config.num_hidden_layers
-    ):
+    if expert_match is not None and int(
+        expert_match.group(1)
+    ) < _text_layer_count(config):
         return TensorClass.ROUTED_EXPERT
     return TensorClass.RESIDENT_TEXT
 
