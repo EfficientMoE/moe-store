@@ -23,9 +23,7 @@ from moe_store.parsing.hf_config import parse_expert_id
 _PIPELINE_INDEX_FILES = ("model_index.json", "modular_model_index.json")
 
 
-def _resolve_checkpoint_dir(
-    checkpoint: str, subfolder: str | None = None
-) -> Path:
+def _download_root(checkpoint: str) -> Path:
     path = Path(checkpoint)
     if not path.exists():
         from huggingface_hub import snapshot_download
@@ -35,6 +33,15 @@ def _resolve_checkpoint_dir(
                 checkpoint, allow_patterns=["*.safetensors*", "*.json", "*.py"]
             )
         )
+    return path
+
+
+def _resolve_checkpoint_dir(
+    checkpoint: str,
+    subfolder: str | None = None,
+    root: Path | None = None,
+) -> Path:
+    path = root if root is not None else _download_root(checkpoint)
     if subfolder is not None:
         sub = path / subfolder
         if not sub.is_dir():
@@ -109,6 +116,9 @@ class _ShardedCheckpoint:
                 ordered.extend(f.keys())
         return ordered
 
+    def file_stem(self, name: str) -> str:
+        return Path(self._location[name]).stem
+
     def spec(self, name: str) -> TensorSpec:
         with safe_open(self._location[name], framework="pt", device="cpu") as f:
             sl = f.get_slice(name)
@@ -143,7 +153,18 @@ def convert_checkpoint(
     partition_size: int = DEFAULT_PARTITION_SIZE,
     subfolder: str | None = None,
 ) -> StoreIndex:
-    ckpt_dir = _resolve_checkpoint_dir(checkpoint, subfolder)
+    root = _download_root(checkpoint)
+    if subfolder is None:
+        from moe_store.convert.pipeline import (
+            convert_pipeline_checkpoint,
+            is_multi_component_pipeline,
+        )
+
+        if is_multi_component_pipeline(root):
+            return convert_pipeline_checkpoint(
+                checkpoint, root, store_dir, partition_size=partition_size
+            )
+    ckpt_dir = _resolve_checkpoint_dir(checkpoint, subfolder, root=root)
     config = _load_config(ckpt_dir)
     shards = _ShardedCheckpoint(ckpt_dir)
 
@@ -243,12 +264,17 @@ def dump_inspect(store_dir: str, *, verbose: bool = False) -> str:
     lines = [f"{key}={value}" for key, value in summary.items()]
     if verbose:
         index = read_index(store_dir)
+        stage_names = [stage.name for stage in index.stages]
         for group in index.groups:
             kind = "expert" if group.is_expert else "dense"
+            stage_idx = group.group_id & 0xFFFFFFFF
+            stage = (
+                stage_names[stage_idx] if stage_idx < len(stage_names) else "?"
+            )
             lines.append(
                 f"group {group.group_id:#018x} {kind} layer={group.layer_id} "
                 f"expert={group.expert_id} file={group.file_id} "
                 f"offset={group.offset} size={group.total_size} "
-                f"members={len(group.members)}"
+                f"members={len(group.members)} stage={stage}"
             )
     return "\n".join(lines)
