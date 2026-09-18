@@ -81,6 +81,7 @@ def plan_layout(
     checkpoint_name: str,
     partition_size: int = DEFAULT_PARTITION_SIZE,
     slot_rank=None,
+    dense_stage_of=None,
 ) -> StoreIndex:
     """Build a validated v2 StoreIndex.
 
@@ -89,7 +90,10 @@ def plan_layout(
     ``slot_rank(name) -> int | None`` optionally supplies the canonical
     G3 slot rank; expert members sort stably by it (scan order breaks
     ties and is the fallback), normalizing v4 and v5 checkpoints to the
-    same positional layout.
+    same positional layout. ``dense_stage_of(name) -> str | None``
+    optionally overrides the dense stage (group) a tensor lands in;
+    ``None`` falls back to the default module-prefix rule. Used by the
+    pipeline converter to bundle e.g. AdaLN branches per block.
     """
     expert_groups: dict[tuple[int, int], list[TensorSpec]] = {}
     stage_order: list[tuple[str, bool, object]] = []
@@ -108,7 +112,13 @@ def plan_layout(
                 expert_stage_of_layer[layer_id] = stage_name
                 stage_order.append((stage_name, True, layer_id))
         else:
-            stage_name = _dense_stage_name(spec.name)
+            stage_name = (
+                dense_stage_of(spec.name)
+                if dense_stage_of is not None
+                else None
+            )
+            if stage_name is None:
+                stage_name = _dense_stage_name(spec.name)
             if stage_name not in dense_groups:
                 dense_groups[stage_name] = []
                 stage_order.append((stage_name, False, stage_name))

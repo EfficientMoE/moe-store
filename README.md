@@ -44,12 +44,19 @@ moe-store convert Qwen/Qwen3-Omni-30B-A3B-Instruct /ssd/stores/qwen3-omni
 ```
 
 Dense diffusion transformers (diffusers-style `_class_name` configs) are
-stored as dense groups only. Pipeline repos auto-descend into `transformer/`;
-multi-variant pipelines need `--subfolder`:
+stored as dense groups only. Single-component pipeline repos auto-descend
+into `transformer/`; roots with two or more weight-bearing components
+(MiniMax-H3: `transformer`, `transformer_ref`, `vae`, `audio_vae`,
+`text_encoder`) convert every component into one store — tensor names are
+prefixed `<component>.`, H3 transformer blocks split into a non-AdaLN group
+plus an `.adaln` bundle group per block, and the other components get one
+group per safetensors shard. `--subfolder` still selects a single variant
+component:
 
 ```bash
 moe-store convert Qwen/Qwen-Image-2512 /ssd/stores/qwen-image
-moe-store convert MiniMaxAI/MiniMax-H3 /ssd/stores/minimax-h3 \
+moe-store convert MiniMaxAI/MiniMax-H3 /ssd/stores/minimax-h3
+moe-store convert MiniMaxAI/MiniMax-H3 /ssd/stores/minimax-h3-fl2va \
     --subfolder FL2VA/transformer
 ```
 
