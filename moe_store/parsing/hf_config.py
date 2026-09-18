@@ -135,6 +135,12 @@ def parse_moe_param(config: PretrainedConfig) -> Tuple[int, int, int]:
         num_decoder_layers = text.num_hidden_layers
         num_layers = text.num_hidden_layers
         num_experts = text.num_experts
+    elif "minimaxm3" in arch:
+        text = moe_text_config(config)
+        num_encoder_layers = 0
+        num_decoder_layers = text.num_hidden_layers
+        num_layers = text.num_hidden_layers
+        num_experts = text.num_local_experts
     elif "qwen3" in arch or "olmoe" in arch:
         num_encoder_layers = 0
         num_decoder_layers = config.num_hidden_layers
@@ -300,6 +306,23 @@ def parse_expert_id(
         result = re.findall(
             r"^thinker\.model\.layers\.(\d+)\.mlp\.experts\.(\d+)\.",
             param_name,
+        )
+        if result:
+            layer_id, expert_id = result[0]
+            layer_id = int(layer_id)
+            expert_id = int(expert_id)
+    elif "minimaxm3" in arch:
+        decoder_sparse_step = 1
+        layer_type = "decoder"
+
+        # per-expert keys after the v5 batched-expert expand; anchored on
+        # language_model to exclude the vision tower
+        # (`model.vision_tower.*`), the multimodal projector, and the shared
+        # expert (`...mlp.shared_experts.*`, which lacks the `experts.<id>.`
+        # digit run).
+        # e.g. "model.language_model.layers.7.mlp.experts.0.gate_proj.weight"
+        result = re.findall(
+            r"language_model\.layers\.(\d+)\.mlp\.experts\.(\d+)\.", param_name
         )
         if result:
             layer_id, expert_id = result[0]
