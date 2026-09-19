@@ -237,6 +237,46 @@ def test_h3_pipeline_members_reconstruct_byte_exact(tmp_path):
     assert checked == len(_expected_names(states))
 
 
+def test_h3_pipeline_preserves_source_dtypes(tmp_path):
+    root = tmp_path / "ckpt"
+    store_dir = tmp_path / "store"
+    root.mkdir()
+    (root / "modular_model_index.json").write_text(
+        json.dumps({"_class_name": "MiniMaxH3ModularPipeline"})
+    )
+    for component in ("transformer", "vae"):
+        comp = root / component
+        comp.mkdir()
+        (comp / "config.json").write_text(
+            json.dumps(
+                {
+                    "_class_name": (
+                        "MiniMaxH3Transformer3DModel"
+                        if component == "transformer"
+                        else "AutoencoderKLMiniMaxH3"
+                    )
+                }
+            )
+        )
+        save_file(
+            {
+                "proj_in.weight": torch.randn(HIDDEN, 8, dtype=torch.float32),
+                "block.weight": torch.randn(
+                    HIDDEN, HIDDEN, dtype=torch.bfloat16
+                ),
+            },
+            str(comp / "diffusion_pytorch_model.safetensors"),
+        )
+
+    convert_checkpoint(str(root), str(store_dir))
+    index = read_index(store_dir)
+
+    dtypes = {member.name: member.dtype for _, member in index.iter_members()}
+    assert dtypes["transformer.proj_in.weight"] == "float32"
+    assert dtypes["transformer.block.weight"] == "bfloat16"
+    assert dtypes["vae.proj_in.weight"] == "float32"
+
+
 def test_h3_pipeline_inspect_names_groups(tmp_path):
     root = tmp_path / "ckpt"
     store_dir = tmp_path / "store"

@@ -101,26 +101,26 @@ def convert_pipeline_checkpoint(
     *,
     partition_size: int = DEFAULT_PARTITION_SIZE,
 ) -> StoreIndex:
-    from moe_store.convert.cast_policy import CastPolicy
     from moe_store.convert.convert import _load_config, _ShardedCheckpoint
 
     specs: list[TensorSpec] = []
     stage_of: dict[str, str] = {}
-    sources: dict[str, tuple[_ShardedCheckpoint, CastPolicy, str]] = {}
+    sources: dict[str, tuple[_ShardedCheckpoint, str]] = {}
 
     for component in weight_bearing_components(root):
         component_dir = root / component
         config = _load_config(component_dir)
         arch = _component_arch(config)
         shards = _ShardedCheckpoint(component_dir)
-        policy = CastPolicy.from_config(config, str(component_dir))
         for name in tqdm(shards.names(), desc=f"scan {component}"):
             raw = shards.spec(name)
-            spec = policy.apply_to_spec(
-                TensorSpec(
-                    f"{component}.{name}", raw.nbytes, raw.dtype, raw.shape
-                ),
-                getattr(torch, raw.dtype),
+            # Pipeline components are stored with their SOURCE dtypes: dense
+            # diffusion checkpoints are mixed-precision on purpose (e.g. H3
+            # keeps proj_in/time_embedder/rope in fp32 next to bf16 blocks,
+            # honored by diffusers _keep_in_fp32_modules), and a blanket
+            # compute-dtype cast destroys those bits irrecoverably.
+            spec = TensorSpec(
+                f"{component}.{name}", raw.nbytes, raw.dtype, raw.shape
             )
             specs.append(spec)
             stage = _component_stage(
@@ -128,11 +128,11 @@ def convert_pipeline_checkpoint(
             )
             if stage is not None:
                 stage_of[spec.name] = stage
-            sources[spec.name] = (shards, policy, name)
+            sources[spec.name] = (shards, name)
 
     def load(full_name: str) -> torch.Tensor:
-        shards, policy, name = sources[full_name]
-        return policy.apply_to_tensor(name, shards.load(name))
+        shards, name = sources[full_name]
+        return shards.load(name)
 
     index = plan_layout(
         specs,
