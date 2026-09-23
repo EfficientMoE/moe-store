@@ -152,6 +152,7 @@ def convert_checkpoint(
     *,
     partition_size: int = DEFAULT_PARTITION_SIZE,
     subfolder: str | None = None,
+    quantize_experts: str | None = None,
 ) -> StoreIndex:
     root = _download_root(checkpoint)
     if subfolder is None:

@@ -29,6 +29,7 @@ def main(argv: list[str] | None = None) -> int:
         help="pipeline component to convert, e.g. transformer or "
         "FL2VA/transformer",
     )
+    convert.add_argument("--quantize-experts", choices=("fp8",), default=None)
 
     inspect = sub.add_parser("inspect", help="print v2 store summary")
     inspect.add_argument("store_dir")
@@ -44,6 +45,7 @@ def main(argv: list[str] | None = None) -> int:
             args.store_dir,
             partition_size=args.partition_size,
             subfolder=args.subfolder,
+            quantize_experts=args.quantize_experts,
         )
         print(
             f"converted {args.checkpoint}: {len(index.groups)} groups, "
