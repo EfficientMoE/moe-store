@@ -11,6 +11,7 @@ Conversion is atomic per store: everything is written to a sibling
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 from pathlib import Path
@@ -18,13 +19,20 @@ from typing import Callable
 
 import torch
 
-from moe_store.index import StoreIndex, data_file_name, write_index
+from moe_store.index import (
+    STORE_META_FILE_NAME,
+    StoreIndex,
+    data_file_name,
+    write_index,
+)
 
 
 def write_store(
     index: StoreIndex,
     load_tensor: Callable[[str], torch.Tensor],
     store_dir: str | Path,
+    *,
+    store_meta: dict | None = None,
 ) -> Path:
     """``load_tensor(name)`` returns the CPU tensor for a member name."""
     store_dir = Path(store_dir)
@@ -68,6 +76,10 @@ def write_store(
             f.close()
 
         write_index(index, tmp_dir)
+        if store_meta is not None:
+            (tmp_dir / STORE_META_FILE_NAME).write_text(
+                json.dumps(store_meta, sort_keys=True) + "\n"
+            )
 
         if store_dir.exists():
             shutil.rmtree(store_dir)

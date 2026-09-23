@@ -17,10 +17,21 @@ from transformers import AutoConfig
 from moe_store.checkpoints import get_checkpoint_paths
 from moe_store.convert.planner import TensorSpec, dtype_token, plan_layout
 from moe_store.convert.writer import write_store
+from moe_store.fp8 import FP8_BLOCK
 from moe_store.index import DEFAULT_PARTITION_SIZE, StoreIndex
 from moe_store.parsing.hf_config import parse_expert_id
 
 _PIPELINE_INDEX_FILES = ("model_index.json", "modular_model_index.json")
+
+_FP8_STORE_META = {
+    "store_format_version": 1,
+    "quantize_experts": "fp8",
+    "quantization_config": {
+        "quant_method": "fp8",
+        "fmt": "e4m3",
+        "weight_block_size": [FP8_BLOCK, FP8_BLOCK],
+    },
+}
 
 
 def _download_root(checkpoint: str) -> Path:
@@ -255,7 +266,8 @@ def convert_checkpoint(
         partition_size=partition_size,
         slot_rank=functools.partial(member_slot_rank, arch),
     )
-    write_store(index, load, store_dir)
+    store_meta = _FP8_STORE_META if quantize_experts == "fp8" else None
+    write_store(index, load, store_dir, store_meta=store_meta)
     return index
 
 

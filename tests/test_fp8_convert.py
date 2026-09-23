@@ -1,9 +1,11 @@
 import json
+from pathlib import Path
 
 import pytest
 import torch
 from safetensors.torch import save_file
 
+import moe_store.index as store_index
 from moe_store.cli import main
 from moe_store.convert.convert import convert_checkpoint
 from moe_store.convert.writer import read_member_tensor
@@ -166,3 +168,55 @@ def test_convert_rejects_already_quantized_source(tmp_path, method):
         convert_checkpoint(
             str(ckpt_dir), str(store_dir), quantize_experts="fp8"
         )
+
+
+def test_fp8_convert_writes_store_metadata(tmp_path):
+    ckpt_dir = tmp_path / "ckpt"
+    store_dir = tmp_path / "store"
+    _write_bf16_moe_checkpoint(ckpt_dir)
+
+    convert_checkpoint(
+        str(ckpt_dir), str(store_dir), quantize_experts="fp8"
+    )
+
+    assert store_index.read_store_meta(store_dir) == {
+        "store_format_version": 1,
+        "quantize_experts": "fp8",
+        "quantization_config": {
+            "quant_method": "fp8",
+            "fmt": "e4m3",
+            "weight_block_size": [128, 128],
+        },
+    }
+
+
+def test_default_convert_does_not_write_store_metadata(tmp_path):
+    ckpt_dir = tmp_path / "ckpt"
+    store_dir = tmp_path / "store"
+    _write_bf16_moe_checkpoint(ckpt_dir)
+
+    convert_checkpoint(str(ckpt_dir), str(store_dir))
+
+    assert store_index.read_store_meta(store_dir) is None
+
+
+def test_fp8_conversion_is_atomic_when_metadata_write_fails(
+    tmp_path, monkeypatch
+):
+    ckpt_dir = tmp_path / "ckpt"
+    store_dir = tmp_path / "store"
+    _write_bf16_moe_checkpoint(ckpt_dir)
+    original_write_text = Path.write_text
+
+    def fail_metadata_write(path, *args, **kwargs):
+        if path.name == store_index.STORE_META_FILE_NAME:
+            raise RuntimeError("simulated metadata write failure")
+        return original_write_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", fail_metadata_write)
+
+    with pytest.raises(RuntimeError, match="metadata write failure"):
+        convert_checkpoint(
+            str(ckpt_dir), str(store_dir), quantize_experts="fp8"
+        )
+    assert not store_dir.exists()
