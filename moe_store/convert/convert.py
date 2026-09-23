@@ -169,7 +169,11 @@ def convert_checkpoint(
     config = _load_config(ckpt_dir)
     shards = _ShardedCheckpoint(ckpt_dir)
 
-    from moe_store.convert.cast_policy import CastPolicy
+    from moe_store.convert.cast_policy import (
+        CastPolicy,
+        FP8ExpertQuantizer,
+        reject_already_quantized_source,
+    )
     from moe_store.convert.v5_remap import (
         DbrxExpansion,
         GptOssExpansion,
@@ -179,6 +183,12 @@ def convert_checkpoint(
     from moe_store.registry.slots import member_slot_rank
 
     policy = CastPolicy.from_config(config, str(ckpt_dir))
+    if quantize_experts not in (None, "fp8"):
+        raise ValueError(
+            f"unsupported expert quantization mode {quantize_experts!r}"
+        )
+    if quantize_experts == "fp8":
+        reject_already_quantized_source(config, policy.quant_info)
     expansion = V5Expansion(config, shards.spec)
     gpt_oss = GptOssExpansion(config, shards.spec)
     dbrx = DbrxExpansion(config, shards.spec)
@@ -194,16 +204,15 @@ def convert_checkpoint(
         gpt_oss.expand_names(expansion.expand_names(shards.names()))
     )
 
-    def spec_of(name: str) -> TensorSpec:
-        raw = (
+    def raw_spec(name: str) -> TensorSpec:
+        return (
             expansion.spec(name)
             or gpt_oss.spec(name)
             or dbrx.spec(name)
             or shards.spec(name)
         )
-        return policy.apply_to_spec(raw, getattr(torch, raw.dtype))
 
-    def load(name: str) -> torch.Tensor:
+    def raw_load(name: str) -> torch.Tensor:
         tensor = expansion.load(name, shards.load)
         if tensor is None:
             tensor = gpt_oss.load(name, shards.load)
@@ -211,6 +220,29 @@ def convert_checkpoint(
             tensor = dbrx.load(name, shards.load)
         if tensor is None:
             tensor = shards.load(name)
+        return tensor
+
+    quantizer = None
+    if quantize_experts == "fp8":
+        quantizer = FP8ExpertQuantizer(
+            expert_of, functools.partial(member_slot_rank, arch)
+        )
+        names = quantizer.prepare(names, raw_spec)
+
+    def spec_of(name: str) -> TensorSpec:
+        if quantizer is not None:
+            quantized = quantizer.spec(name)
+            if quantized is not None:
+                return quantized
+        raw = raw_spec(name)
+        return policy.apply_to_spec(raw, getattr(torch, raw.dtype))
+
+    def load(name: str) -> torch.Tensor:
+        if quantizer is not None:
+            quantized = quantizer.load(name, raw_load)
+            if quantized is not None:
+                return quantized
+        tensor = raw_load(name)
         return policy.apply_to_tensor(name, tensor)
 
     specs = [spec_of(name) for name in tqdm(names, desc="scan")]
