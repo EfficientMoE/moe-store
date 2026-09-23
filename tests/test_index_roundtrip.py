@@ -14,6 +14,7 @@ from moe_store.index import (
     StageMeta,
     StoreIndex,
     read_index,
+    read_store_meta,
     validate_index,
     write_index,
 )
@@ -71,6 +72,10 @@ def test_roundtrip_bytes_equal(tmp_path):
     write_index(index, tmp_path)
     loaded = read_index(tmp_path)
     assert loaded == index
+
+
+def test_read_store_meta_returns_none_when_absent(tmp_path):
+    assert read_store_meta(tmp_path) is None
 
 
 def test_rejects_bad_magic(tmp_path):

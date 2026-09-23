@@ -12,6 +12,7 @@ reader in ``csrc/store`` must stay byte-compatible with it.
 from __future__ import annotations
 
 import io
+import json
 import struct
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -27,6 +28,7 @@ END_OF_PIPELINE = 0xFFFFFFFF
 
 INDEX_FILE_NAME = "store_index"
 DATA_FILE_PREFIX = "store_data_"
+STORE_META_FILE_NAME = "store_meta.json"
 
 DTYPE_TOKENS = (
     "float32",
@@ -113,6 +115,13 @@ class StoreIndex:
 
 def data_file_name(file_id: int) -> str:
     return f"{DATA_FILE_PREFIX}{file_id}"
+
+
+def read_store_meta(store_dir: str | Path) -> dict | None:
+    path = Path(store_dir) / STORE_META_FILE_NAME
+    if not path.is_file():
+        return None
+    return json.loads(path.read_text())
 
 
 def _write_str(buf: BinaryIO, value: str) -> None:
