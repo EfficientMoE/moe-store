@@ -204,6 +204,30 @@ def test_padded_batch_is_packed_and_scattered_back() -> None:
         )
 
 
+def test_stale_metadata_with_wrong_sequence_count_falls_back_unpacked() -> None:
+    """Metadata for another batch must not drive token packing."""
+    torch.manual_seed(5)
+    config = _config()
+    shim = OlmoePagedAttention(config, layer_idx=0).eval()
+    bsz, q_len = 2, 3
+    hidden = torch.randn(bsz, q_len, config.hidden_size)
+    positions = torch.arange(q_len).unsqueeze(0).expand(bsz, -1)
+    cos, sin = _rope(config, hidden, positions)
+
+    backend = _CausalSdpaBackend([q_len, q_len])
+    OlmoePagedAttention.set_paged_context(backend, _metadata([2, 3, 2]))
+    with torch.no_grad():
+        out, _ = shim(
+            hidden_states=hidden,
+            position_embeddings=(cos, sin),
+            attention_mask=None,
+        )
+
+    assert out.shape == (bsz, q_len, config.hidden_size)
+    assert len(backend.calls) == 1
+    assert backend.calls[0]["q"][0] == bsz * q_len
+
+
 def test_without_paged_context_defers_to_stock_forward() -> None:
     torch.manual_seed(2)
     config = _config(clip_qkv=1.0)
