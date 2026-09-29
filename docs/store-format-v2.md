@@ -11,11 +11,14 @@ an entry in this document's revision table.
 ```
 <store_dir>/
 ├── store_index          # binary index, format below
-└── store_data_<N>       # partition files, N = 0,1,2,... contiguous
+├── store_data_<N>       # partition files, N = 0,1,2,... contiguous
+└── store_meta.json      # optional store-level feature metadata
 ```
 
 A store directory holds exactly one converted model. Partition files are
-dense binary blobs with no headers; all structure lives in `store_index`.
+dense binary blobs with no headers. Tensor layout lives in `store_index`;
+optional features that affect how readers interpret tensor members are
+declared in `store_meta.json`.
 
 ## 2. Concepts
 
@@ -106,9 +109,37 @@ Each group record is immediately followed by its member records:
 Packed quantized payloads (MXFP4 blocks, GPTQ qweight, …) use the storage
 dtype of their raw buffer (`uint8`/`int32`), not the logical dtype.
 
+### 4.5 Optional `store_meta.json`
+
+`store_meta.json` is an optional UTF-8 JSON object. Its absence means the
+store has no converter-added feature metadata. Version 1 currently declares
+conversion-time routed-expert FP8 quantization:
+
+```json
+{
+  "store_format_version": 1,
+  "quantize_experts": "fp8",
+  "quantization_config": {
+    "quant_method": "fp8",
+    "fmt": "e4m3",
+    "weight_block_size": [128, 128]
+  }
+}
+```
+
+With `quantize_experts: "fp8"`, every routed-expert weight is
+`float8_e4m3fn` and is immediately followed by its fp32
+`<weight_name>_scale_inv` member (G4). Non-expert tensors and expert biases
+retain their normal cast-policy dtype. Writers MUST NOT emit this metadata
+unless routed-expert weights were actually quantized.
+
 ## 5. Reader requirements
 
 - Readers MUST validate magic + version and reject anything but `2`.
+- Before interpreting expert-group members, readers MUST read
+  `store_meta.json` when present. They MUST reject unknown metadata versions
+  or unsupported `quantize_experts` values instead of treating those stores
+  as unquantized positional layouts.
 - Readers MUST use `(file_id, offset, total_size)` for group fetches and
   MUST NOT issue per-member reads on the hot path.
 - Readers MAY memory-map `store_index`; it is immutable after conversion.

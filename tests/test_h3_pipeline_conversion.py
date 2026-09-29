@@ -16,6 +16,7 @@ behavior is pinned separately in test_dense_conversion.py.
 
 import json
 
+import pytest
 import torch
 from safetensors.torch import save_file
 
@@ -156,6 +157,20 @@ def _write_h3_modular_pipeline(root):
     (tokenizer / "tokenizer.json").write_text("{}")
 
     return states
+
+
+def test_h3_pipeline_rejects_expert_quantization_flag(tmp_path):
+    root = tmp_path / "ckpt"
+    _write_h3_modular_pipeline(root)
+
+    with pytest.raises(
+        ValueError, match="not supported for multi-component pipeline"
+    ):
+        convert_checkpoint(
+            str(root),
+            str(tmp_path / "store"),
+            quantize_experts="fp8",
+        )
 
 
 def _stage_members(index):

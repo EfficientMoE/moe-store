@@ -17,10 +17,21 @@ from transformers import AutoConfig
 from moe_store.checkpoints import get_checkpoint_paths
 from moe_store.convert.planner import TensorSpec, dtype_token, plan_layout
 from moe_store.convert.writer import write_store
+from moe_store.fp8 import FP8_BLOCK
 from moe_store.index import DEFAULT_PARTITION_SIZE, StoreIndex
 from moe_store.parsing.hf_config import parse_expert_id
 
 _PIPELINE_INDEX_FILES = ("model_index.json", "modular_model_index.json")
+
+_FP8_STORE_META = {
+    "store_format_version": 1,
+    "quantize_experts": "fp8",
+    "quantization_config": {
+        "quant_method": "fp8",
+        "fmt": "e4m3",
+        "weight_block_size": [FP8_BLOCK, FP8_BLOCK],
+    },
+}
 
 
 def _download_root(checkpoint: str) -> Path:
@@ -152,8 +163,13 @@ def convert_checkpoint(
     *,
     partition_size: int = DEFAULT_PARTITION_SIZE,
     subfolder: str | None = None,
+    quantize_experts: str | None = None,
 ) -> StoreIndex:
     root = _download_root(checkpoint)
+    if quantize_experts not in (None, "fp8"):
+        raise ValueError(
+            f"unsupported expert quantization mode {quantize_experts!r}"
+        )
     if subfolder is None:
         from moe_store.convert.pipeline import (
             convert_pipeline_checkpoint,
@@ -161,6 +177,11 @@ def convert_checkpoint(
         )
 
         if is_multi_component_pipeline(root):
+            if quantize_experts is not None:
+                raise ValueError(
+                    "--quantize-experts is not supported for multi-component "
+                    "pipeline checkpoints"
+                )
             return convert_pipeline_checkpoint(
                 checkpoint, root, store_dir, partition_size=partition_size
             )
@@ -168,7 +189,11 @@ def convert_checkpoint(
     config = _load_config(ckpt_dir)
     shards = _ShardedCheckpoint(ckpt_dir)
 
-    from moe_store.convert.cast_policy import CastPolicy
+    from moe_store.convert.cast_policy import (
+        CastPolicy,
+        FP8ExpertQuantizer,
+        reject_already_quantized_source,
+    )
     from moe_store.convert.v5_remap import (
         DbrxExpansion,
         GptOssExpansion,
@@ -178,6 +203,8 @@ def convert_checkpoint(
     from moe_store.registry.slots import member_slot_rank
 
     policy = CastPolicy.from_config(config, str(ckpt_dir))
+    if quantize_experts == "fp8":
+        reject_already_quantized_source(config, policy.quant_info)
     expansion = V5Expansion(config, shards.spec)
     gpt_oss = GptOssExpansion(config, shards.spec)
     dbrx = DbrxExpansion(config, shards.spec)
@@ -193,16 +220,15 @@ def convert_checkpoint(
         gpt_oss.expand_names(expansion.expand_names(shards.names()))
     )
 
-    def spec_of(name: str) -> TensorSpec:
-        raw = (
+    def raw_spec(name: str) -> TensorSpec:
+        return (
             expansion.spec(name)
             or gpt_oss.spec(name)
             or dbrx.spec(name)
             or shards.spec(name)
         )
-        return policy.apply_to_spec(raw, getattr(torch, raw.dtype))
 
-    def load(name: str) -> torch.Tensor:
+    def raw_load(name: str) -> torch.Tensor:
         tensor = expansion.load(name, shards.load)
         if tensor is None:
             tensor = gpt_oss.load(name, shards.load)
@@ -210,6 +236,33 @@ def convert_checkpoint(
             tensor = dbrx.load(name, shards.load)
         if tensor is None:
             tensor = shards.load(name)
+        return tensor
+
+    quantizer = None
+    if quantize_experts == "fp8":
+        quantizer = FP8ExpertQuantizer(
+            expert_of, functools.partial(member_slot_rank, arch)
+        )
+        names = quantizer.prepare(names, raw_spec)
+        if quantizer.num_quantized_weights == 0:
+            raise ValueError(
+                "FP8 expert quantization matched no routed expert weights"
+            )
+
+    def spec_of(name: str) -> TensorSpec:
+        if quantizer is not None:
+            quantized = quantizer.spec(name)
+            if quantized is not None:
+                return quantized
+        raw = raw_spec(name)
+        return policy.apply_to_spec(raw, getattr(torch, raw.dtype))
+
+    def load(name: str) -> torch.Tensor:
+        if quantizer is not None:
+            quantized = quantizer.load(name, raw_load)
+            if quantized is not None:
+                return quantized
+        tensor = raw_load(name)
         return policy.apply_to_tensor(name, tensor)
 
     specs = [spec_of(name) for name in tqdm(names, desc="scan")]
@@ -222,7 +275,8 @@ def convert_checkpoint(
         partition_size=partition_size,
         slot_rank=functools.partial(member_slot_rank, arch),
     )
-    write_store(index, load, store_dir)
+    store_meta = _FP8_STORE_META if quantize_experts == "fp8" else None
+    write_store(index, load, store_dir, store_meta=store_meta)
     return index
 
 

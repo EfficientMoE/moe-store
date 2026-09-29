@@ -14,6 +14,7 @@ from moe_store.index import (
     StageMeta,
     StoreIndex,
     read_index,
+    read_store_meta,
     write_index,
 )
 
@@ -24,5 +25,6 @@ __all__ = [
     "StoreIndex",
     "__version__",
     "read_index",
+    "read_store_meta",
     "write_index",
 ]
