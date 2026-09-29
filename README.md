@@ -23,9 +23,21 @@ MoE-Infinity depends on moe-store; moe-store never imports MoE-Infinity.
 
 ## Install
 
+GitHub Releases are the authoritative source for versioned artifacts:
+
 ```bash
-pip install moe-store
+TAG=v0.2.2
+mkdir -p /tmp/moe-store-release
+gh release download "$TAG" \
+  --repo EfficientMoE/moe-store \
+  --pattern 'moe_store-*.whl' \
+  --dir /tmp/moe-store-release
+pip install /tmp/moe-store-release/moe_store-*.whl
 ```
+
+The same tag workflow attempts a non-blocking PyPI mirror only after the
+GitHub Release exists. When that optional mirror is available,
+`pip install moe-store` remains supported.
 
 ## Convert a checkpoint
 
