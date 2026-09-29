@@ -3,8 +3,11 @@
 
 # EfficientMoE Team
 
+import json
+
 import pytest
 
+from moe_store import read_store_meta as read_exported_store_meta
 from moe_store.index import (
     GROUP_ALIGNMENT,
     KIND_DENSE,
@@ -76,6 +79,23 @@ def test_roundtrip_bytes_equal(tmp_path):
 
 def test_read_store_meta_returns_none_when_absent(tmp_path):
     assert read_store_meta(tmp_path) is None
+
+
+def test_read_store_meta_rejects_invalid_json_with_path(tmp_path):
+    path = tmp_path / "store_meta.json"
+    path.write_text("{")
+
+    with pytest.raises(ValueError, match="store_meta.json"):
+        read_store_meta(tmp_path)
+
+
+def test_read_store_meta_rejects_unknown_version(tmp_path):
+    (tmp_path / "store_meta.json").write_text(
+        json.dumps({"store_format_version": 99})
+    )
+
+    with pytest.raises(ValueError, match="metadata version 99"):
+        read_exported_store_meta(tmp_path)
 
 
 def test_rejects_bad_magic(tmp_path):

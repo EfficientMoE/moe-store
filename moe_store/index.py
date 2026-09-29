@@ -121,7 +121,18 @@ def read_store_meta(store_dir: str | Path) -> dict | None:
     path = Path(store_dir) / STORE_META_FILE_NAME
     if not path.is_file():
         return None
-    return json.loads(path.read_text())
+    try:
+        metadata = json.loads(path.read_text())
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid store metadata in {path}: {exc}") from exc
+    if not isinstance(metadata, dict):
+        raise ValueError(f"invalid store metadata in {path}: expected object")
+    version = metadata.get("store_format_version")
+    if version != 1:
+        raise ValueError(
+            f"unsupported store metadata version {version!r} in {path}"
+        )
+    return metadata
 
 
 def _write_str(buf: BinaryIO, value: str) -> None:

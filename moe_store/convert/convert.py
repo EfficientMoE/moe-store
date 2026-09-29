@@ -166,6 +166,10 @@ def convert_checkpoint(
     quantize_experts: str | None = None,
 ) -> StoreIndex:
     root = _download_root(checkpoint)
+    if quantize_experts not in (None, "fp8"):
+        raise ValueError(
+            f"unsupported expert quantization mode {quantize_experts!r}"
+        )
     if subfolder is None:
         from moe_store.convert.pipeline import (
             convert_pipeline_checkpoint,
@@ -173,6 +177,11 @@ def convert_checkpoint(
         )
 
         if is_multi_component_pipeline(root):
+            if quantize_experts is not None:
+                raise ValueError(
+                    "--quantize-experts is not supported for multi-component "
+                    "pipeline checkpoints"
+                )
             return convert_pipeline_checkpoint(
                 checkpoint, root, store_dir, partition_size=partition_size
             )
@@ -194,10 +203,6 @@ def convert_checkpoint(
     from moe_store.registry.slots import member_slot_rank
 
     policy = CastPolicy.from_config(config, str(ckpt_dir))
-    if quantize_experts not in (None, "fp8"):
-        raise ValueError(
-            f"unsupported expert quantization mode {quantize_experts!r}"
-        )
     if quantize_experts == "fp8":
         reject_already_quantized_source(config, policy.quant_info)
     expansion = V5Expansion(config, shards.spec)
@@ -239,6 +244,10 @@ def convert_checkpoint(
             expert_of, functools.partial(member_slot_rank, arch)
         )
         names = quantizer.prepare(names, raw_spec)
+        if quantizer.num_quantized_weights == 0:
+            raise ValueError(
+                "FP8 expert quantization matched no routed expert weights"
+            )
 
     def spec_of(name: str) -> TensorSpec:
         if quantizer is not None:

@@ -8,7 +8,9 @@ from safetensors.torch import save_file
 
 import moe_store.index as store_index
 from moe_store.cli import main
+from moe_store.convert.cast_policy import FP8ExpertQuantizer
 from moe_store.convert.convert import convert_checkpoint
+from moe_store.convert.planner import TensorSpec
 from moe_store.convert.writer import read_group_bytes, read_member_tensor
 from moe_store.fp8 import dequant_fp8_blockwise
 from moe_store.index import GROUP_ALIGNMENT, MEMBER_ALIGNMENT, read_index
@@ -51,6 +53,7 @@ def _write_bf16_moe_checkpoint(
     *,
     expert_shape=(129, 130),
     expert_dtype=torch.bfloat16,
+    include_expert_bias=False,
     deterministic=False,
 ):
     ckpt_dir.mkdir()
@@ -83,6 +86,11 @@ def _write_bf16_moe_checkpoint(
         for slot in ("gate_proj", "up_proj", "down_proj"):
             name = f"model.layers.0.mlp.experts.{expert}.{slot}.weight"
             state[name] = torch.randn(*expert_shape, dtype=expert_dtype)
+            if include_expert_bias:
+                bias_name = f"model.layers.0.mlp.experts.{expert}.{slot}.bias"
+                state[bias_name] = torch.randn(
+                    expert_shape[0], dtype=expert_dtype
+                )
     if deterministic:
         state = {
             name: torch.arange(tensor.numel(), dtype=torch.int32)
@@ -140,17 +148,51 @@ def test_convert_rejects_non_2d_expert_weight(tmp_path):
         )
 
 
-def test_convert_does_not_quantize_fp32_expert_source(tmp_path):
+def test_convert_rejects_fp32_expert_source(tmp_path):
     ckpt_dir = tmp_path / "ckpt"
     store_dir = tmp_path / "store"
     _write_bf16_moe_checkpoint(ckpt_dir, expert_dtype=torch.float32)
 
+    with pytest.raises(ValueError, match="requires bf16/fp16 expert weights"):
+        convert_checkpoint(
+            str(ckpt_dir), str(store_dir), quantize_experts="fp8"
+        )
+
+    assert not store_dir.exists()
+
+
+def test_convert_preserves_expert_biases(tmp_path):
+    ckpt_dir = tmp_path / "ckpt"
+    store_dir = tmp_path / "store"
+    state = _write_bf16_moe_checkpoint(ckpt_dir, include_expert_bias=True)
+
     convert_checkpoint(str(ckpt_dir), str(store_dir), quantize_experts="fp8")
     index = read_index(store_dir)
+    stored = {
+        member.name: read_member_tensor(store_dir, group, member)
+        for group, member in index.iter_members()
+    }
 
-    for group in (group for group in index.groups if group.is_expert):
-        assert len(group.members) == 3
-        assert all(member.dtype == "bfloat16" for member in group.members)
+    bias_names = [name for name in state if name.endswith(".bias")]
+    assert bias_names
+    for name in bias_names:
+        assert stored[name].dtype == torch.bfloat16
+        assert torch.equal(stored[name], state[name])
+
+
+def test_fp8_quantizer_releases_weight_after_scale_load():
+    name = "model.layers.0.mlp.experts.0.gate_proj.weight"
+    scale_name = f"{name}_scale_inv"
+    tensor = torch.randn(129, 130, dtype=torch.bfloat16)
+    spec = TensorSpec(name, tensor.numel() * 2, "bfloat16", tensor.shape)
+    quantizer = FP8ExpertQuantizer(lambda _: (0, 0), lambda _: 0)
+
+    assert quantizer.prepare([name], lambda _: spec) == [name, scale_name]
+    assert quantizer.load(name, lambda _: tensor) is not None
+    assert len(quantizer._cache) == 1
+
+    assert quantizer.load(scale_name, lambda _: tensor) is not None
+    assert quantizer._cache == {}
 
 
 def test_convert_rejects_unknown_expert_quantization_mode(tmp_path):

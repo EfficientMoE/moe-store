@@ -70,6 +70,9 @@ class FP8ExpertQuantizer:
             if not is_expert_slot:
                 expanded.append(name)
                 continue
+            if not name.endswith(".weight"):
+                expanded.append(name)
+                continue
             spec = spec_of(name)
             if len(spec.shape) != 2:
                 raise ValueError(
@@ -77,8 +80,10 @@ class FP8ExpertQuantizer:
                     f"shape {spec.shape}"
                 )
             if spec.dtype not in ("bfloat16", "float16"):
-                expanded.append(name)
-                continue
+                raise ValueError(
+                    "FP8 expert quantization requires bf16/fp16 expert "
+                    f"weights: {name} has dtype {spec.dtype}"
+                )
             scale_name = f"{name}_scale_inv"
             # The scale shares the weight's registry slot rank; insertion
             # order is the stable tie-break that keeps each pair adjacent.
@@ -111,7 +116,14 @@ class FP8ExpertQuantizer:
         if source not in self._cache:
             self._cache[source] = quant_fp8_blockwise(base_load(source))
         weight, scale = self._cache[source]
-        return scale if name in self._scale_sources else weight
+        if name in self._scale_sources:
+            del self._cache[source]
+            return scale
+        return weight
+
+    @property
+    def num_quantized_weights(self) -> int:
+        return len(self._weight_specs)
 
 
 def _has_fp8_blockwise(config: object) -> bool:
