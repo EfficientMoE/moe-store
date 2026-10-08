@@ -133,6 +133,38 @@ With `quantize_experts: "fp8"`, every routed-expert weight is
 retain their normal cast-policy dtype. Writers MUST NOT emit this metadata
 unless routed-expert weights were actually quantized.
 
+Version 1 also declares conversion-time routed-expert MXFP4 quantization
+(the FP4 group format, versioned by `fp4_format_version`):
+
+```json
+{
+  "store_format_version": 1,
+  "quantize_experts": "fp4",
+  "quantization_config": {
+    "quant_method": "mxfp4",
+    "fp4_format_version": 1,
+    "fmt": "e2m1",
+    "scale_fmt": "e8m0",
+    "weight_block_size": [1, 32],
+    "pack_dim": 1,
+    "pack_factor": 2
+  }
+}
+```
+
+With `quantize_experts: "fp4"`, every routed-expert `[N, K]` weight is
+stored as a packed `[N, K/2]` `uint8` member (two E2M1 nibbles per byte
+along K: low nibble = even K index, sign in nibble bit 3) immediately
+followed by its `[N, K/32]` `uint8` `<weight_name>_scales` member (G4),
+one E8M0 power-of-two exponent (`byte - 127`) per 32 consecutive K
+elements. K must be divisible by 32; the converter rejects weights it
+cannot represent. `fp4_format_version` versions the FP4 payload encoding
+so a later NVFP4-class layout can coexist; readers MUST reject
+`fp4_format_version` values they do not implement. The same rules apply:
+non-expert tensors and expert biases keep their cast-policy dtype, and
+writers MUST NOT emit this metadata unless routed-expert weights were
+actually quantized.
+
 ## 5. Reader requirements
 
 - Readers MUST validate magic + version and reject anything but `2`.
