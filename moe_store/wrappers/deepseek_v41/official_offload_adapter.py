@@ -34,7 +34,66 @@ __all__ = [
     "make_expert_store",
     "patch_moe_with_offload_v41",
     "load_offloaded_v41_flash",
+    "sparse_attn_eager",
+    "maybe_patch_sparse_attn",
 ]
+
+# Dynamic shared memory the reference tilelang sparse_attn kernel requests
+# for the released shapes (h=64 padded heads, d=512): observed
+# cudaFuncSetAttribute failure at this size on SM120 workstation GPUs
+# (~99 KB opt-in limit; the kernel targets datacenter-class ~227 KB).
+_SPARSE_ATTN_SMEM_BYTES = 141_312
+
+
+def sparse_attn_eager(
+    q: torch.Tensor,
+    kv: torch.Tensor,
+    attn_sink: torch.Tensor,
+    topk_idxs: torch.Tensor,
+    softmax_scale: float,
+) -> torch.Tensor:
+    """Exact-math eager replacement for the reference ``sparse_attn``.
+
+    Shapes (verified @ pin): q [b, s, h, d]; kv [b, n, d] (one shared KV
+    row per position); topk_idxs [b, s, topk] int32 with -1 for invalid
+    slots; attn_sink [h]. Matches the tilelang kernel's online softmax:
+    the sink joins the denominator only, and rows whose indices are all
+    invalid produce an all-zero output.
+    """
+    b, s, h, d = q.shape
+    idx = topk_idxs.long()
+    valid = idx >= 0
+    safe = idx.clamp_min(0)
+    rows = kv.gather(
+        1, safe.reshape(b, -1, 1).expand(-1, -1, d)
+    ).reshape(b, s, -1, d)
+    scores = (
+        torch.einsum("bshd,bstd->bsht", q.float(), rows.float())
+        * softmax_scale
+    )
+    scores = scores.masked_fill(~valid[:, :, None, :], float("-inf"))
+    # Finite lower bound mirrors the kernel's -1e30 fill so all-invalid
+    # rows stay NaN-free and come out zero.
+    smax = scores.amax(-1, keepdim=True).clamp_min(-1e30)
+    num = torch.exp(scores - smax)
+    den = num.sum(-1) + torch.exp(
+        attn_sink.float().reshape(1, 1, h) - smax.squeeze(-1)
+    )
+    out = torch.einsum("bsht,bstd->bshd", num, rows.float())
+    return (out / den.unsqueeze(-1)).to(q.dtype)
+
+
+def maybe_patch_sparse_attn(official_module, device) -> bool:
+    """Swap in ``sparse_attn_eager`` when the GPU cannot host the reference
+    kernel's dynamic shared memory request. Returns True when patched."""
+    if not torch.cuda.is_available():
+        return False
+    props = torch.cuda.get_device_properties(device)
+    smem_optin = getattr(props, "shared_memory_per_block_optin", 0)
+    if smem_optin >= _SPARSE_ATTN_SMEM_BYTES:
+        return False
+    official_module.sparse_attn = sparse_attn_eager
+    return True
 
 
 def make_expert_store(
@@ -143,6 +202,7 @@ def load_offloaded_v41_flash(
     with open(config_path) as f:
         margs = M.ModelArgs(**json.load(f))
     margs.max_batch_size = 1
+    maybe_patch_sparse_attn(M, device)
 
     orig_moe_init = M.MoE.__init__
     orig_engram_embed_init = M.ParallelEngramEmbedding.__init__

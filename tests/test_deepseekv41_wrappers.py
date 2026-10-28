@@ -261,3 +261,37 @@ def test_sync_v41_moe_block_requires_transformers_class() -> None:
     from moe_store.wrappers.deepseek_v41 import SyncDeepSeekV41MoEBlock
 
     assert SyncDeepSeekV41MoEBlock is not None
+
+
+def test_sparse_attn_eager_matches_naive_reference() -> None:
+    from moe_store.wrappers.deepseek_v41.official_offload_adapter import (
+        sparse_attn_eager,
+    )
+
+    torch.manual_seed(4)
+    b, s, h, d, n, topk = 2, 3, 4, 16, 10, 6
+    q = torch.randn(b, s, h, d)
+    kv = torch.randn(b, n, d)
+    sink = torch.randn(h)
+    idx = torch.randint(0, n, (b, s, topk), dtype=torch.int32)
+    idx[0, 1, 3:] = -1  # partially invalid row
+    idx[1, 2, :] = -1  # fully invalid row -> all-zero output
+    scale = d**-0.5
+
+    out = sparse_attn_eager(q, kv, sink, idx, scale)
+
+    expected = torch.zeros(b, s, h, d)
+    for bi in range(b):
+        for si in range(s):
+            for hi in range(h):
+                valid = [int(t) for t in idx[bi, si] if int(t) >= 0]
+                if not valid:
+                    continue  # kernel convention: all-zero output
+                rows = kv[bi, valid].float()
+                scores = rows @ q[bi, si, hi].float() * scale
+                m = scores.max()
+                num = torch.exp(scores - m)
+                den = num.sum() + torch.exp(sink[hi].float() - m)
+                expected[bi, si, hi] = (num @ rows) / den
+    torch.testing.assert_close(out, expected, atol=1e-5, rtol=1e-5)
+    assert torch.all(out[1, 2] == 0)
