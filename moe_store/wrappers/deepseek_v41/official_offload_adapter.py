@@ -186,7 +186,10 @@ def load_offloaded_v41_flash(
     if offload_engram:
         M.ParallelEngramEmbedding.__init__ = _null_engram_embed_init
     try:
-        with torch.device(device):
+        # Verified @ pin: official generate.py sets the bf16 default dtype
+        # before building; without it bf16-less params (embed, norms) come
+        # up fp32 and act_quant rejects the activations.
+        with M.set_dtype(torch.bfloat16), torch.device(device):
             model = M.Transformer(margs, tokenizer)
     finally:
         M.MoE.__init__ = orig_moe_init
