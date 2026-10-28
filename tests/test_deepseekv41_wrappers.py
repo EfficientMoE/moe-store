@@ -249,3 +249,15 @@ def test_engram_host_store_gathers_and_dequants_rows() -> None:
         nd_out[1, 0, 1],
         store.gather(torch.tensor([5]), dtype=torch.float32)[0],
     )
+
+
+def test_sync_v41_moe_block_requires_transformers_class() -> None:
+    import moe_store.registry.constants as constants
+
+    if constants.DeepseekV41ForCausalLM is None:
+        pytest.skip(
+            "transformers does not provide DeepseekV41ForCausalLM yet"
+        )
+    from moe_store.wrappers.deepseek_v41 import SyncDeepSeekV41MoEBlock
+
+    assert SyncDeepSeekV41MoEBlock is not None
