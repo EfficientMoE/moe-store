@@ -354,6 +354,34 @@ def _load_non_expert_weights_v41(model, ckpt_path, device, text_only=True):
                     target = buffers.get(k)
                 if target is None:
                     continue
+                if k.endswith("wo_a.weight"):
+                    # Verified @ pin: the model keeps wo_a in bf16 (it is
+                    # used via einsum, not linear()); official convert.py
+                    # dequantizes it blockwise and drops the scale. Hub
+                    # shards keep it fp8+scale, so mirror that dequant.
+                    t = f.get_tensor(k)
+                    skey = k[: -len("weight")] + "scale"
+                    if (
+                        t.dtype == torch.float8_e4m3fn
+                        and skey in f.keys()
+                    ):
+                        s = f.get_tensor(skey)
+                        ob = t.size(0) // s.size(0)
+                        ib = t.size(1) // s.size(1)
+                        t = (
+                            (
+                                t.unflatten(0, (-1, ob))
+                                .unflatten(-1, (-1, ib))
+                                .float()
+                                * s[:, None, :, None].float()
+                            )
+                            .flatten(2, 3)
+                            .flatten(0, 1)
+                            .to(target.dtype)
+                        )
+                    if target.shape == t.shape:
+                        target.copy_(t.to(device))
+                    continue
                 t = f.get_tensor(k).to(device)
                 if target.shape == t.shape:
                     if target.dtype == torch.float4_e2m1fn_x2:

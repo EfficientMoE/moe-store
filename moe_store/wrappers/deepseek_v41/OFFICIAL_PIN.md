@@ -56,7 +56,20 @@
   token_types=None)` → `(output_ids, logits, main_hidden)`; it *samples
   internally* with `args.temperature` (use the returned `logits` for greedy
   checks) and drives engram hashing + KV caches via `start_pos` increments
-  (follow `generate.py`'s prefill/decode loop).
+  (follow `generate.py`'s prefill/decode loop). `logits` covers the final
+  position only (`[b, vocab]`, `ParallelHead(full_logits=False)`).
+- **Runtime environment:** the whole process must run under
+  `torch.set_default_dtype(torch.bfloat16)` (kernel outputs are allocated
+  with the default dtype) and `torch.set_default_device(<cuda>)` after
+  model load (cached helpers like `get_window_topk_idxs` build index
+  tensors on the default device).
+- **SM120 caveat:** the tilelang `sparse_attn` kernel requests ~141 KB of
+  dynamic shared memory (h=64, d=512) and fails `cudaFuncSetAttribute` on
+  workstation Blackwell (~99 KB opt-in); the adapter auto-substitutes the
+  exact-math `sparse_attn_eager` on such devices.
+- **Hub shard dtype:** packed FP4 expert weights load as int8 from the hub
+  shards and must be viewed as `torch.float4_e2m1fn_x2` before the
+  reference `linear()` dispatch (`V41ExpertHostStore` does this).
 - **Engram:** `model.layers[L].engram` is `Engram` with
   `engram.embed = ParallelEngramEmbedding(rows, 256)`:
   `embed.weight fp8_e4m3 [rows, 256]`, `embed.scale ue8m0 [rows, 8]`
