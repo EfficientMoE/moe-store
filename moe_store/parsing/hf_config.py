@@ -250,8 +250,11 @@ def parse_expert_id(
         decoder_sparse_step = 1
         layer_type = "decoder"
 
-        # The V4.1 checkpoint key layout is UNCONFIRMED. Reuse the V4 pattern
-        # until it can be checked against real safetensors shards.
+        # Confirmed against the live deepseek-ai/DeepSeek-V4.1-Flash index
+        # (2026-10-27): routed experts use the V4-native layout
+        # "layers.{L}.ffn.experts.{E}.{w1,w2,w3}.{weight,scale}";
+        # "mtp.{K}.ffn.experts.*" (dspark) and "layers.{L}.engram.*" never
+        # match because the pattern anchors on "layers.N.ffn.experts.".
         result = re.findall(r"layers\.(\d+)\.ffn\.experts\.(\d+)\.", param_name)
         if result:
             layer_id, expert_id = result[0]
