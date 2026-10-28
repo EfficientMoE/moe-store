@@ -208,3 +208,44 @@ def test_v41_adapter_reuses_v4_host_store(tiny_v41_ckpt: Path) -> None:
         "w3.scale",
     }
     assert store.is_resident(1, 3)
+
+
+def test_engram_host_store_gathers_and_dequants_rows() -> None:
+    from moe_store.wrappers.deepseek_v41 import EngramHostStore
+
+    torch.manual_seed(3)
+    rows, dim, group = 64, 256, 32
+    reference = torch.randn(rows, dim)
+    # Build an fp8/ue8m0 quantized table: per 32-wide group, scale = 2^ceil
+    scales_f = reference.view(rows, dim // group, group).abs().amax(-1)
+    exponents = torch.clamp(scales_f.log2().ceil(), -126, 127)
+    scale_e8m0 = (exponents + 127).to(torch.uint8).view(
+        torch.float8_e8m0fnu
+    )
+    scaled = reference.view(rows, dim // group, group) / exponents.exp2()[
+        ..., None
+    ]
+    table_fp8 = scaled.view(rows, dim).to(torch.float8_e4m3fn)
+
+    store = EngramHostStore(
+        weight=table_fp8, scale=scale_e8m0, device=torch.device("cpu")
+    )
+    idx = torch.tensor([0, 63, 7, 7])
+    out = store.gather(idx, dtype=torch.float32)
+    assert out.shape == (4, dim)
+    expected = (
+        table_fp8[idx].to(torch.float32).view(4, dim // group, group)
+        * scale_e8m0[idx].to(torch.float32)[..., None]
+    ).view(4, dim)
+    torch.testing.assert_close(out, expected)
+    # quantization round-trip stays within fp8 e4m3 relative tolerance
+    torch.testing.assert_close(out, reference[idx], atol=0.15, rtol=0.15)
+
+    # the reference engram passes [B, L, n_hash_cols] index tensors
+    nd_idx = torch.tensor([[[0, 1], [2, 3]], [[4, 5], [6, 7]]])
+    nd_out = store.gather(nd_idx, dtype=torch.float32)
+    assert nd_out.shape == (2, 2, 2, dim)
+    torch.testing.assert_close(
+        nd_out[1, 0, 1],
+        store.gather(torch.tensor([5]), dtype=torch.float32)[0],
+    )

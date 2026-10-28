@@ -3,6 +3,7 @@
 
 # EfficientMoE Team
 
+from .engram_offload import EngramHostStore
 from .expert_bundle import DeepSeekV41ExpertTensorIndexer
 from .official_offload_adapter import (
     load_offloaded_v41_flash,
@@ -13,6 +14,7 @@ from .routing import topk_route_v41
 
 __all__ = [
     "DeepSeekV41ExpertTensorIndexer",
+    "EngramHostStore",
     "load_offloaded_v41_flash",
     "make_expert_store",
     "patch_moe_with_offload_v41",
