@@ -96,14 +96,34 @@ def maybe_patch_sparse_attn(official_module, device) -> bool:
     return True
 
 
+class V41ExpertHostStore(OfficialExpertHostStore):
+    """V4 store with hub-shard dtype normalization.
+
+    The V4.1 hub checkpoint stores packed FP4 expert weights as int8;
+    the reference ``linear()`` dispatches on ``torch.float4_e2m1fn_x2``,
+    so host-cached weights are re-viewed on load (the view keeps pinned
+    memory and byte layout; V4's converted shards carried the fp4 dtype
+    natively, hence no view there).
+    """
+
+    def _load_host(self, layer_id, expert_id):
+        tensors = super()._load_host(layer_id, expert_id)
+        for name in ("w1.weight", "w2.weight", "w3.weight"):
+            t = tensors[name]
+            if t.dtype == torch.int8:
+                tensors[name] = t.view(torch.float4_e2m1fn_x2)
+        return tensors
+
+
 def make_expert_store(
     ckpt_path: str,
     device: torch.device,
     max_resident_experts: int = 16,
     shard_file: str = None,
 ) -> OfficialExpertHostStore:
-    """V4.1 uses the V4 store unchanged: same key prefix, same 6 members."""
-    return OfficialExpertHostStore(
+    """V4.1 reuses the V4 store: same key prefix, same 6 members; only the
+    hub int8->fp4 dtype view is layered on top."""
+    return V41ExpertHostStore(
         ckpt_path,
         device,
         max_resident_experts=max_resident_experts,

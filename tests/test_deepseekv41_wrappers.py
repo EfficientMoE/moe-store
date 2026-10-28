@@ -208,6 +208,10 @@ def test_v41_adapter_reuses_v4_host_store(tiny_v41_ckpt: Path) -> None:
         "w3.scale",
     }
     assert store.is_resident(1, 3)
+    # hub shards store packed fp4 as int8; the store must re-view so the
+    # reference linear() dispatches the fp4 path
+    assert bundle["w1.weight"].dtype == torch.float4_e2m1fn_x2
+    assert bundle["w1.scale"].dtype == torch.float8_e8m0fnu
 
 
 def test_engram_host_store_gathers_and_dequants_rows() -> None:
