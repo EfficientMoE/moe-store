@@ -10,6 +10,7 @@ from .deepseek_v3_wrapper import SyncDeepseekV3MoEBlock
 from .glm5_next import SyncGlm5NextMoEBlock
 from .glm_moe_dsa import SyncGlmMoeDsaMoEBlock
 from .gpt_oss import SyncGptOssMLP
+from .hy_v3 import SyncHYV3MoEBlock
 from .jamba import SyncJambaMoEBlock
 from .minimax_m3_vl import SyncMiniMaxM3VLSparseMoeBlock
 from .mixtral import SyncMixtralSparseMoeBlock
@@ -42,6 +43,7 @@ __all__ = [
     "SyncGlm5NextMoEBlock",
     "SyncGlmMoeDsaMoEBlock",
     "SyncGptOssMLP",
+    "SyncHYV3MoEBlock",
     "SyncJambaMoEBlock",
     "SyncMiniMaxM3VLSparseMoeBlock",
     "SyncMixtralSparseMoeBlock",
