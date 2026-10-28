@@ -121,6 +121,7 @@ def load_offloaded_v41_flash(
     use_native: bool = None,
     text_only: bool = True,
     tokenizer=None,
+    offload_engram: bool = True,
 ):
     """Build the official model with null routed experts, then patch.
 
@@ -130,6 +131,13 @@ def load_offloaded_v41_flash(
     required when the config enables engram layers (it feeds
     ``NgramHashState``). The null-expert ``MoE.__init__`` swap also covers
     the dspark MTP blocks, which reuse the same MoE class.
+
+    With ``offload_engram`` the ~98 GB-per-table engram embeddings are
+    never allocated on device: ``ParallelEngramEmbedding.__init__`` is
+    swapped to a parameter-free shim during construction (the reference
+    would otherwise allocate the full fp8 tables as parameters), and after
+    the resident weight load each engram layer's ``embed.forward`` is
+    rebound to an ``EngramHostStore`` row gather.
     """
     M = official_module
     with open(config_path) as f:
@@ -137,6 +145,19 @@ def load_offloaded_v41_flash(
     margs.max_batch_size = 1
 
     orig_moe_init = M.MoE.__init__
+    orig_engram_embed_init = M.ParallelEngramEmbedding.__init__
+
+    def _null_engram_embed_init(self, num_embeddings, dim):
+        import torch.nn as nn
+
+        nn.Module.__init__(self)
+        self.num_embeddings = num_embeddings
+        self.dim = dim
+        self.part_num_embeddings = num_embeddings
+        self.vocab_start_idx = 0
+        self.vocab_end_idx = num_embeddings
+        self.register_parameter("weight", None)
+        self.register_parameter("scale", None)
 
     def _null_routed_moe_init(self, layer_id, args):
         import torch.nn as nn
@@ -162,11 +183,14 @@ def load_offloaded_v41_flash(
         )
 
     M.MoE.__init__ = _null_routed_moe_init
+    if offload_engram:
+        M.ParallelEngramEmbedding.__init__ = _null_engram_embed_init
     try:
         with torch.device(device):
             model = M.Transformer(margs, tokenizer)
     finally:
         M.MoE.__init__ = orig_moe_init
+        M.ParallelEngramEmbedding.__init__ = orig_engram_embed_init
     torch.set_grad_enabled(False)
 
     store = make_expert_store(
@@ -177,7 +201,35 @@ def load_offloaded_v41_flash(
     _load_non_expert_weights_v41(
         model, ckpt_path, device, text_only=text_only
     )
+    if offload_engram:
+        _attach_engram_offload(model, margs, ckpt_path, device)
     return model, store
+
+
+def _attach_engram_offload(model, margs, ckpt_path, device):
+    """Rebind each engram layer's embedding lookup to a host row store.
+
+    Verified @ pin: ``model.layers[L].engram.embed.forward(indices)``
+    returns dequantized bf16 rows ``[*indices.shape, head_dim]``; for mp1
+    no vocab masking applies. ``EngramHostStore.gather`` reproduces the
+    reference dequant (fp8 rows x ue8m0 group-32 scales) exactly.
+    """
+    from .engram_offload import EngramHostStore
+
+    for layer_id in getattr(margs, "engram_layer_ids", ()):
+        engram = model.layers[layer_id].engram
+        if engram is None:
+            continue
+        host_store = EngramHostStore.from_checkpoint(
+            ckpt_path, layer_id, device
+        )
+        engram.embed._moe_engram_store = host_store
+
+        def _lookup(indices, _store=host_store):
+            return _store.gather(indices, dtype=torch.bfloat16)
+
+        engram.embed.forward = _lookup
+    return model
 
 
 def _load_non_expert_weights_v41(model, ckpt_path, device, text_only=True):
