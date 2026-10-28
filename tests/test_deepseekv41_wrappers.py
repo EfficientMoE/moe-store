@@ -92,3 +92,93 @@ def test_v41_bundle_has_six_tensors_with_fp4_metadata(
     assert w1.shape == (INTER, HIDDEN // 2)
     loaded = indexer.load_bundle_tensors(bundle)
     assert len(loaded) == 6
+
+
+def test_topk_route_v41_matches_v4_for_all_text_tokens() -> None:
+    from moe_store.wrappers.deepseek_v4 import topk_route
+    from moe_store.wrappers.deepseek_v41 import topk_route_v41
+
+    torch.manual_seed(0)
+    hidden = torch.randn(5, HIDDEN)
+    gate_w = torch.randn(EXPERTS * 4, HIDDEN)
+    bias = torch.randn(EXPERTS * 4)
+    bias_vl = torch.randn(EXPERTS * 4)
+    mask = torch.zeros(5, dtype=torch.bool)  # all text
+
+    w_ref, i_ref = topk_route(
+        hidden,
+        gate_w,
+        bias,
+        top_k=3,
+        routed_scaling_factor=1.5,
+        norm_topk_prob=True,
+    )
+    w, i = topk_route_v41(
+        hidden,
+        gate_w,
+        bias,
+        bias_vl,
+        mask,
+        top_k=3,
+        routed_scaling_factor=1.5,
+        norm_topk_prob=True,
+    )
+    assert torch.equal(i.sort(dim=-1).values, i_ref.sort(dim=-1).values)
+    torch.testing.assert_close(
+        w.gather(1, i.argsort(dim=-1)), w_ref.gather(1, i_ref.argsort(dim=-1))
+    )
+
+
+def test_topk_route_v41_vision_tokens_use_bias_vl() -> None:
+    from moe_store.wrappers.deepseek_v41 import topk_route_v41
+
+    torch.manual_seed(1)
+    n_experts = 8
+    hidden = torch.randn(4, HIDDEN)
+    gate_w = torch.randn(n_experts, HIDDEN)
+    # bias strongly prefers experts {0,1}; bias_vl strongly prefers {6,7}
+    bias = torch.full((n_experts,), -100.0)
+    bias[:2] = 100.0
+    bias_vl = torch.full((n_experts,), -100.0)
+    bias_vl[6:] = 100.0
+    mask = torch.tensor([False, True, False, True])
+
+    _, indices = topk_route_v41(
+        hidden,
+        gate_w,
+        bias,
+        bias_vl,
+        mask,
+        top_k=2,
+        routed_scaling_factor=1.0,
+        norm_topk_prob=True,
+    )
+    assert set(indices[0].tolist()) == {0, 1}
+    assert set(indices[1].tolist()) == {6, 7}
+    assert set(indices[2].tolist()) == {0, 1}
+    assert set(indices[3].tolist()) == {6, 7}
+
+
+def test_topk_route_v41_weights_exclude_selection_bias() -> None:
+    from moe_store.wrappers.deepseek_v41 import topk_route_v41
+
+    torch.manual_seed(2)
+    hidden = torch.randn(3, HIDDEN)
+    gate_w = torch.randn(8, HIDDEN)
+    bias = torch.randn(8) * 100  # bias shifts selection only
+    mask = torch.zeros(3, dtype=torch.bool)
+    weights, _ = topk_route_v41(
+        hidden,
+        gate_w,
+        bias,
+        bias,
+        mask,
+        top_k=2,
+        routed_scaling_factor=1.0,
+        norm_topk_prob=True,
+    )
+    # normalized sqrtsoftplus scores are positive and sum to 1 per token
+    torch.testing.assert_close(
+        weights.sum(dim=-1), torch.ones(3), atol=1e-5, rtol=1e-5
+    )
+    assert (weights > 0).all()
