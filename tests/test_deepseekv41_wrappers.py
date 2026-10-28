@@ -182,3 +182,29 @@ def test_topk_route_v41_weights_exclude_selection_bias() -> None:
         weights.sum(dim=-1), torch.ones(3), atol=1e-5, rtol=1e-5
     )
     assert (weights > 0).all()
+
+
+def test_v41_adapter_reuses_v4_host_store(tiny_v41_ckpt: Path) -> None:
+    from moe_store.wrappers.deepseek_v4.official_offload_adapter import (
+        OfficialExpertHostStore,
+    )
+    from moe_store.wrappers.deepseek_v41.official_offload_adapter import (
+        make_expert_store,
+    )
+
+    store = make_expert_store(
+        str(tiny_v41_ckpt),
+        device=torch.device("cpu"),
+        max_resident_experts=2,
+    )
+    assert isinstance(store, OfficialExpertHostStore)
+    bundle = store.get(1, 3)
+    assert set(bundle) == {
+        "w1.weight",
+        "w1.scale",
+        "w2.weight",
+        "w2.scale",
+        "w3.weight",
+        "w3.scale",
+    }
+    assert store.is_resident(1, 3)
