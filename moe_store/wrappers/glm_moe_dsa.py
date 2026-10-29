@@ -69,9 +69,10 @@ class SyncGlmMoeDsaMoEBlock(nn.Module):
         if isinstance(routed, tuple):
             # transformers >= 5.15 moved routing into GlmMoeDsaTopkRouter, which
             # returns (router_logits, topk_weights, topk_indices).
-            _, topk_weights, topk_indices = routed
-            return topk_indices, topk_weights
-        return self._route_tokens_to_experts(routed)
+            router_logits, topk_weights, topk_indices = routed
+            return topk_indices, topk_weights, router_logits
+        topk_indices, topk_weights = self._route_tokens_to_experts(routed)
+        return topk_indices, topk_weights, routed
 
     def _route_tokens_to_experts(self, router_logits: torch.Tensor):
         # Mirror of transformers GlmMoeDsaMoE.route_tokens_to_experts (grouped
@@ -112,7 +113,7 @@ class SyncGlmMoeDsaMoEBlock(nn.Module):
         hidden_flat = hidden_states.view(-1, hid)
         N = hidden_flat.shape[0]
 
-        topk_idx, topk_weights = self._route(hidden_flat)
+        topk_idx, topk_weights, router_logits = self._route(hidden_flat)
 
         router_mask = torch.zeros(
             N, self.num_experts, dtype=torch.bool, device=hidden_flat.device
@@ -133,7 +134,7 @@ class SyncGlmMoeDsaMoEBlock(nn.Module):
                 hidden_flat,
                 router_mask,
                 routing_weights_mask,
-                router_logits=None,
+                router_logits=router_logits,
             )
             expert_output = self.expert_executor.wait_dispatch_local()
         else:

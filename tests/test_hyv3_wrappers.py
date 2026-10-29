@@ -89,7 +89,10 @@ def test_routing_parity_with_stock_hyv3_moe(tiny_config):
         stock.e_score_correction_bias.copy_(bias)
 
     hidden = torch.randn(5, tiny_config.hidden_size)
-    _, ref_w, ref_idx = stock.gate(hidden, stock.e_score_correction_bias)
-    idx, w = block._route(hidden)
+    ref_logits, ref_w, ref_idx = stock.gate(
+        hidden, stock.e_score_correction_bias
+    )
+    idx, w, logits = block._route(hidden)
     assert torch.equal(idx, ref_idx)
     assert torch.allclose(w, ref_w)
+    assert torch.allclose(logits, ref_logits)
