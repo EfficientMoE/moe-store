@@ -8,6 +8,8 @@ from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
     Qwen3_5MoeTopKRouter,
 )
 
+from . import fused_routing
+
 
 class SyncQwen3_5MoeSparseMoeBlock(nn.Module):
     archer_config = None
@@ -40,6 +42,16 @@ class SyncQwen3_5MoeSparseMoeBlock(nn.Module):
         self.lib = None
 
     def _route(self, hidden_flat):
+        fused = fused_routing.route(
+            hidden_flat,
+            self.gate.weight,
+            self.top_k,
+            scoring="softmax",
+            renormalize=True,
+            return_logits=True,
+        )
+        if fused is not None:
+            return fused
         router_logits, routing_weights, selected_experts = self.gate(
             hidden_flat
         )
