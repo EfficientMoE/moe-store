@@ -157,6 +157,11 @@ def parse_moe_param(config: PretrainedConfig) -> Tuple[int, int, int]:
         num_decoder_layers = text.num_hidden_layers
         num_layers = text.num_hidden_layers
         num_experts = text.n_routed_experts
+    elif "hyv3" in arch:
+        num_encoder_layers = 0
+        num_decoder_layers = config.num_hidden_layers
+        num_layers = config.num_hidden_layers
+        num_experts = config.num_experts
     elif "deepseekv41" in arch:
         text = moe_text_config(config)
         num_encoder_layers = 0
@@ -357,6 +362,26 @@ def parse_expert_id(
             layer_id = int(layer_id)
             expert_id = int(expert_id)
             # MTP layer guard, same convention as the GlmMoeDsa branch above
+            if layer_id >= num_layers:
+                return None, None
+    elif "hyv3" in arch:
+        decoder_sparse_step = 1
+        layer_type = "decoder"
+
+        # Confirmed against the live tencent/Hy3-FP8 index (2026-10-28):
+        # "model.layers.{L}.mlp.experts.{E}.{gate,up,down}_proj.
+        # {weight,weight_scale,input_scale}". Shared experts use
+        # ".mlp.shared_mlp." and the router ".mlp.router.gate." /
+        # ".mlp.expert_bias", none of which contain "experts.<id>.".
+        result = re.findall(
+            r"model\.layers\.(\d+)\.mlp\.experts\.(\d+)\.", param_name
+        )
+        if result:
+            layer_id, expert_id = result[0]
+            layer_id = int(layer_id)
+            expert_id = int(expert_id)
+            # MTP guard: Hy3 stores its MTP layer (own 192-expert MoE) at
+            # index num_hidden_layers (80), same convention as GlmMoeDsa.
             if layer_id >= num_layers:
                 return None, None
     elif "deepseek" in arch or "qwen3" in arch or "olmoe" in arch:

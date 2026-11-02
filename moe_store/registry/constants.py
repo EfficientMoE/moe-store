@@ -52,6 +52,11 @@ try:
 except ImportError:
     MiniMaxM3SparseForConditionalGeneration = None
 
+try:
+    from transformers import HYV3ForCausalLM
+except ImportError:
+    HYV3ForCausalLM = None
+
 MODEL_MAPPING_NAMES = {
     "nllb": NllbMoeForConditionalGeneration,
     "mixtral": MixtralForCausalLM,
@@ -148,6 +153,15 @@ if Qwen3OmniMoeForConditionalGeneration is not None:
 if MiniMaxM3SparseForConditionalGeneration is not None:
     MODEL_MAPPING_NAMES["minimaxm3"] = MiniMaxM3SparseForConditionalGeneration
     MODEL_MAPPING_TYPES["minimaxm3"] = 5
+
+# Hy3 (arch "HYV3ForCausalLM", model_type "hy_v3") routes 192 per-expert
+# gate_proj/up_proj/down_proj experts (expert-type 5) with a sigmoid +
+# expert_bias router. The batched HF HYV3Experts module is replaced by the
+# per-expert SyncHYV3MoEBlock on offload. Requires transformers >= 5.6 which
+# ships the class; registered only when importable (mirrors the guards above).
+if HYV3ForCausalLM is not None:
+    MODEL_MAPPING_NAMES["hyv3"] = HYV3ForCausalLM
+    MODEL_MAPPING_TYPES["hyv3"] = 5
 
 
 # Dense diffusion transformers (diffusers-style `_class_name` configs) have
