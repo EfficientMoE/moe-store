@@ -21,22 +21,22 @@ from typing import Optional
 
 import torch
 
-_FUSED = None
-_FUSED_TRIED = False
+_MAKE = None
+_LOAD_TRIED = False
 
 
 def _load():
-    global _FUSED, _FUSED_TRIED
-    if not _FUSED_TRIED:
-        _FUSED_TRIED = True
+    global _MAKE, _LOAD_TRIED
+    if not _LOAD_TRIED:
+        _LOAD_TRIED = True
         if os.environ.get("MOE_STORE_FUSED_ROUTER", "1") != "0":
             try:
-                from moe_infinity.kernel.router import fused_route
+                from moe_infinity.kernel.router import make_router
 
-                _FUSED = fused_route
+                _MAKE = make_router
             except Exception:  # not installed / no Triton / old version
-                _FUSED = None
-    return _FUSED
+                _MAKE = None
+    return _MAKE
 
 
 def route(
@@ -44,6 +44,7 @@ def route(
     gate_weight: torch.Tensor,
     top_k: int,
     *,
+    owner: Optional[object] = None,
     scoring: str = "softmax",
     bias: Optional[torch.Tensor] = None,
     n_group: int = 1,
@@ -54,25 +55,45 @@ def route(
     weights_dtype: Optional[torch.dtype] = None,
     return_logits: bool = False,
 ):
-    """``(router_mask, routing_weights, logits | None)`` or ``None``."""
+    """``(router_mask, routing_weights, logits | None)`` or ``None``.
+
+    The router is built once and cached on ``owner`` (the MoE block); it is
+    rebuilt when the gate weight / bias storage changes (reload, device move).
+    """
     if not (hidden_states.is_cuda and gate_weight.is_cuda):
         return None
-    fused = _load()
-    if fused is None:
+    make = _load()
+    if make is None:
         return None
-    out = fused(
-        hidden_states,
-        gate_weight,
+    key = (
+        gate_weight.data_ptr(),
+        gate_weight.dtype,
+        None if bias is None else bias.data_ptr(),
         top_k,
-        scoring=scoring,
-        bias=bias,
-        n_group=n_group,
-        topk_group=topk_group,
-        renormalize=renormalize,
-        scaling=scaling,
-        eps=eps,
-        weights_dtype=weights_dtype,
-        return_logits=return_logits,
-        active_flags=True,
+        return_logits,
     )
-    return out.router_mask, out.routing_weights, out.logits
+    cached = (
+        getattr(owner, "_moe_fused_router", None) if owner is not None else None
+    )
+    if cached is not None and cached[0] == key:
+        router = cached[1]
+    else:
+        router = make(
+            gate_weight,
+            top_k,
+            scoring=scoring,
+            bias=bias,
+            n_group=n_group,
+            topk_group=topk_group,
+            renormalize=renormalize,
+            scaling=scaling,
+            eps=eps,
+            weights_dtype=weights_dtype,
+            return_logits=return_logits,
+            active_flags=True,
+            compact=False,
+        )
+        if owner is not None:
+            owner._moe_fused_router = (key, router)
+    out = router(hidden_states)
+    return out[2], out[3], out[4]

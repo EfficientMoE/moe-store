@@ -95,6 +95,7 @@ class SyncDeepSeekV4MoEBlock(nn.Module):
                 hidden_states.reshape(-1, hidden_states.shape[-1]),
                 self.gate_weight,
                 self.num_experts_per_tok,
+                owner=self,
                 scoring="sqrtsoftplus",
                 bias=self.gate_bias,
                 renormalize=self.norm_topk_prob,

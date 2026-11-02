@@ -46,6 +46,7 @@ class SyncQwen3_5MoeSparseMoeBlock(nn.Module):
             hidden_flat,
             self.gate.weight,
             self.top_k,
+            owner=self,
             scoring="softmax",
             renormalize=True,
             return_logits=True,

@@ -24,8 +24,8 @@ def torch_path(monkeypatch):
 
     class _Ctx:
         def __enter__(self):
-            monkeypatch.setattr(fused_routing, "_FUSED", None)
-            monkeypatch.setattr(fused_routing, "_FUSED_TRIED", True)
+            monkeypatch.setattr(fused_routing, "_MAKE", None)
+            monkeypatch.setattr(fused_routing, "_LOAD_TRIED", True)
 
         def __exit__(self, *exc):
             monkeypatch.undo()

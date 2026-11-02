@@ -54,6 +54,7 @@ class Qwen3MoEBlock(nn.Module):
             hidden_states,
             self.gate.weight,
             self.top_k,
+            owner=self,
             scoring="softmax",
             renormalize=self.norm_topk_prob,
             weights_dtype=hidden_states.dtype,

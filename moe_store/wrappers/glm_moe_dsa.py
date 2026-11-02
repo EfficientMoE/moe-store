@@ -86,6 +86,7 @@ class SyncGlmMoeDsaMoEBlock(nn.Module):
             hidden_flat,
             self.gate.weight,
             self.top_k,
+            owner=self,
             scoring="sigmoid",
             bias=bias.to(hidden_flat.device),
             n_group=self.n_group,
