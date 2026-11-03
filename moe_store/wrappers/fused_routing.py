@@ -11,7 +11,9 @@ cores, the (grouped) top-k selection and renormalisation, the dense
 active-expert flags (pinned host memory) in one launch, with expert selection
 identical to the torch code it replaces. :func:`route` returns ``None`` when
 the fused path does not apply (CPU tensors, MoE-Infinity / Triton missing,
-``MOE_STORE_FUSED_ROUTER=0``) so callers keep their torch path.
+``MOE_STORE_FUSED_ROUTER=0``, or a GPU other than the RTX PRO 6000 the
+kernels were tuned on: ``moe_infinity.kernel.router.router_supported``) so
+callers keep their torch path.
 """
 
 from __future__ import annotations
@@ -31,9 +33,12 @@ def _load():
         _LOAD_TRIED = True
         if os.environ.get("MOE_STORE_FUSED_ROUTER", "1") != "0":
             try:
-                from moe_infinity.kernel.router import make_router
+                from moe_infinity.kernel.router import (
+                    make_router,
+                    router_supported,
+                )
 
-                _MAKE = make_router
+                _MAKE = (make_router, router_supported)
             except Exception:  # not installed / no Triton / old version
                 _MAKE = None
     return _MAKE
@@ -78,22 +83,29 @@ def route(
     if cached is not None and cached[0] == key:
         router = cached[1]
     else:
-        router = make(
-            gate_weight,
-            top_k,
-            scoring=scoring,
-            bias=bias,
-            n_group=n_group,
-            topk_group=topk_group,
-            renormalize=renormalize,
-            scaling=scaling,
-            eps=eps,
-            weights_dtype=weights_dtype,
-            return_logits=return_logits,
-            active_flags=True,
-            compact=False,
-        )
+        make_router, supported = make
+        # The fused kernels are tuned for the RTX PRO 6000 (hardware gate);
+        # elsewhere the caller keeps its own torch routing.
+        router = None
+        if supported(gate_weight.device):
+            router = make_router(
+                gate_weight,
+                top_k,
+                scoring=scoring,
+                bias=bias,
+                n_group=n_group,
+                topk_group=topk_group,
+                renormalize=renormalize,
+                scaling=scaling,
+                eps=eps,
+                weights_dtype=weights_dtype,
+                return_logits=return_logits,
+                active_flags=True,
+                compact=False,
+            )
         if owner is not None:
             owner._moe_fused_router = (key, router)
+    if router is None:
+        return None
     out = router(hidden_states)
     return out[2], out[3], out[4]
