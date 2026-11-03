@@ -8,7 +8,8 @@
 Checks the adapter plumbing (active-expert set, pointer table, masking of
 experts outside this rank's range) against the per-expert native forward on
 tiny random FP4 experts. Needs a CUDA sm_120 GPU and the MoE-Infinity
-`_v4_fp4` extension with `v4_moe_forward`; skipped otherwise.
+`_v4_fp4` extension with `v4_moe_forward_sm120_pro6000` on a device that
+passes its hardware gate (RTX PRO 6000); skipped otherwise.
 """
 
 import pytest
@@ -24,8 +25,10 @@ def _ext():
         from moe_infinity import _v4_fp4
     except ImportError:
         pytest.skip("moe_infinity._v4_fp4 not available")
-    if not hasattr(_v4_fp4, "v4_moe_forward"):
-        pytest.skip("_v4_fp4 without v4_moe_forward")
+    if not hasattr(_v4_fp4, "v4_moe_forward_sm120_pro6000"):
+        pytest.skip("_v4_fp4 without v4_moe_forward_sm120_pro6000")
+    if not _v4_fp4.v4_moe_supported(torch.cuda.current_device()):
+        pytest.skip("grouped FP4 MoE is gated to the RTX PRO 6000")
     return _v4_fp4
 
 
@@ -84,7 +87,7 @@ def test_grouped_matches_per_expert_native():
     for e in active:
         idx, _ = torch.where(indices == e)
         b = experts[e]
-        out = ext.v4_expert_forward_fp4(
+        out = ext.v4_expert_forward_fp4_sm120_pro6000(
             x[idx].contiguous(),
             *(b[n].view(torch.uint8) for n in ("w1.weight", "w1.scale")),
             *(b[n].view(torch.uint8) for n in ("w2.weight", "w2.scale")),

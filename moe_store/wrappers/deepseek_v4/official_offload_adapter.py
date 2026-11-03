@@ -16,6 +16,7 @@ import torch
 import torch.nn.functional as F
 from safetensors import safe_open
 
+from ...hooks import ops
 from .vision_exp import should_skip_resident_load
 
 
@@ -218,11 +219,23 @@ _TABLE_KEYS = (
 )
 
 
-def grouped_native_available() -> bool:
+def grouped_native_available(device=None) -> bool:
+    """Whether the grouped native MoE (``v4_moe_forward_sm120_pro6000``) may
+    run on ``device``.
+
+    Its kernels use sm_120a block-scaled MMA and are tuned for the RTX PRO
+    6000; the engine's SM120 + RTX_PRO_6000 hardware gate decides. Every other
+    device (or an engine without the gate) keeps the per-expert Path B
+    (``v4_expert_forward``: BF16 dequant + cuBLAS).
+    """
+    gate = ops.v4_moe_sm120_pro6000_supported
+    if gate is None:
+        return False
     try:
-        return hasattr(_load_native_fp4(), "v4_moe_forward")
+        ext = _load_native_fp4()
     except Exception:
         return False
+    return hasattr(ext, "v4_moe_forward_sm120_pro6000") and bool(gate(device))
 
 
 def _moe_forward_grouped(
@@ -255,7 +268,7 @@ def _moe_forward_grouped(
     table = rows.pin_memory().to(x.device, non_blocking=True)
     ids = torch.where(local, indices, torch.full_like(indices, -1))
     inter = bundles[0]["w1.weight"].shape[0]
-    return ext.v4_moe_forward(
+    return ext.v4_moe_forward_sm120_pro6000(
         x.contiguous(),
         ids.contiguous(),
         weights.float().contiguous(),
@@ -270,7 +283,7 @@ def patch_moe_with_offload(model, store, official_module, use_native=None):
     grouped = False
     if use_native:
         _load_native_fp4()
-        grouped = grouped_native_available()
+        grouped = grouped_native_available(store.device)
 
     def make_forward(moe, layer_id):
         gate = moe.gate
