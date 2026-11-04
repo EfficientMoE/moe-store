@@ -63,7 +63,10 @@ def _expert(H, I, gen):
     return out
 
 
-def test_grouped_matches_per_expert_native():
+@pytest.mark.parametrize("default_cuda", [False, True])
+def test_grouped_matches_per_expert_native(default_cuda):
+    """``default_cuda``: the official DeepSeek generate path runs with
+    ``torch.set_default_device("cuda")``; host staging must stay on CPU."""
     ext = _ext()
     from moe_store.wrappers.deepseek_v4 import official_offload_adapter as ad
 
@@ -77,9 +80,15 @@ def test_grouped_matches_per_expert_native():
     indices = torch.rand(T, E, generator=gen).topk(k, -1).indices.cuda()
     weights = torch.ones(T, k, device="cuda")
 
-    y = ad._moe_forward_grouped(
-        x, weights, indices, store, 0, start, end, E, 10.0
-    )
+    prev = torch.get_default_device()
+    if default_cuda:
+        torch.set_default_device("cuda")
+    try:
+        y = ad._moe_forward_grouped(
+            x, weights, indices, store, 0, start, end, E, 10.0
+        )
+    finally:
+        torch.set_default_device(prev)
     active = sorted({e for e in indices.flatten().tolist() if start <= e < end})
     assert store.prefetched == [active]
 

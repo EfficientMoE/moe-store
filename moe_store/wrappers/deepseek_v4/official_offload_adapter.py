@@ -256,7 +256,10 @@ def _moe_forward_grouped(
     store.prefetch(layer_id, active)
     bundles = [store.get(layer_id, e) for e in active]
     stream = torch.cuda.current_stream(x.device)
-    rows = torch.zeros((n_routed, len(_TABLE_KEYS)), dtype=torch.int64)
+    # host staging: the official generate path sets a CUDA default device
+    rows = torch.zeros(
+        (n_routed, len(_TABLE_KEYS)), dtype=torch.int64, device="cpu"
+    )
     for e, bundle in zip(active, bundles):
         for j, key in enumerate(_TABLE_KEYS):
             t = bundle[key]
