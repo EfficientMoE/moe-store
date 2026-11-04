@@ -239,14 +239,25 @@ def grouped_native_available(device=None) -> bool:
 
 
 def _moe_forward_grouped(
-    x, weights, indices, store, layer_id, start_idx, end_idx, n_routed, limit
+    x,
+    weights,
+    indices,
+    store,
+    layer_id,
+    start_idx,
+    end_idx,
+    n_routed,
+    limit,
+    act_block=128,
 ):
     """All routed experts of one layer in one native grouped call.
 
     The host learns the active-expert set once (the offload store has to
     fetch those experts); routing, FP8 activation quantisation, the
     block-scaled FP4 GEMMs, SwiGLU and the weighted top-k sum run on device.
-    Returns the FP32 routed-expert sum [T, dim].
+    Returns the FP32 routed-expert sum [T, dim]. ``act_block`` is the
+    official FP8 activation-quantisation group (``fp8_block_size``: 128 for
+    V4-Flash, 32 for V4.1-Flash).
     """
     ext = _load_native_fp4()
     local = (indices >= start_idx) & (indices < end_idx)
@@ -278,6 +289,7 @@ def _moe_forward_grouped(
         table,
         inter,
         float(limit or 0.0),
+        int(act_block),
     )
 
 
@@ -287,6 +299,10 @@ def patch_moe_with_offload(model, store, official_module, use_native=None):
     if use_native:
         _load_native_fp4()
         grouped = grouped_native_available(store.device)
+
+    # FP8 activation-quantisation group of the official linear() for FP4
+    # experts: 128 elements in V4-Flash, 32 in V4.1-Flash
+    act_block = int(getattr(official_module, "fp8_block_size", 128))
 
     def make_forward(moe, layer_id):
         gate = moe.gate
@@ -313,6 +329,7 @@ def patch_moe_with_offload(model, store, official_module, use_native=None):
                     end_idx,
                     n_routed,
                     swiglu_limit,
+                    act_block,
                 )
                 if official_module.world_size > 1:
                     official_module.dist.all_reduce(y)

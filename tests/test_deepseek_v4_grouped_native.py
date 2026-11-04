@@ -63,8 +63,10 @@ def _expert(H, I, gen):
     return out
 
 
-@pytest.mark.parametrize("default_cuda", [False, True])
-def test_grouped_matches_per_expert_native(default_cuda):
+@pytest.mark.parametrize(
+    "default_cuda, act_block", [(False, 128), (True, 128), (False, 32)]
+)
+def test_grouped_matches_per_expert_native(default_cuda, act_block):
     """``default_cuda``: the official DeepSeek generate path runs with
     ``torch.set_default_device("cuda")``; host staging must stay on CPU."""
     ext = _ext()
@@ -85,7 +87,7 @@ def test_grouped_matches_per_expert_native(default_cuda):
         torch.set_default_device("cuda")
     try:
         y = ad._moe_forward_grouped(
-            x, weights, indices, store, 0, start, end, E, 10.0
+            x, weights, indices, store, 0, start, end, E, 10.0, act_block
         )
     finally:
         torch.set_default_device(prev)
@@ -102,6 +104,7 @@ def test_grouped_matches_per_expert_native(default_cuda):
             *(b[n].view(torch.uint8) for n in ("w2.weight", "w2.scale")),
             *(b[n].view(torch.uint8) for n in ("w3.weight", "w3.scale")),
             10.0,
+            act_block,
         )
         ref[idx] += out.float()
     torch.testing.assert_close(y, ref)
