@@ -17,6 +17,7 @@ from transformers import AutoConfig
 from moe_store.checkpoints import get_checkpoint_paths
 from moe_store.convert.planner import TensorSpec, dtype_token, plan_layout
 from moe_store.convert.writer import write_store
+from moe_store.fp4 import MXFP4_BLOCK
 from moe_store.fp8 import FP8_BLOCK
 from moe_store.index import DEFAULT_PARTITION_SIZE, StoreIndex
 from moe_store.parsing.hf_config import parse_expert_id
@@ -32,6 +33,22 @@ _FP8_STORE_META = {
         "weight_block_size": [FP8_BLOCK, FP8_BLOCK],
     },
 }
+
+_FP4_STORE_META = {
+    "store_format_version": 1,
+    "quantize_experts": "fp4",
+    "quantization_config": {
+        "quant_method": "mxfp4",
+        "fp4_format_version": 1,
+        "fmt": "e2m1",
+        "scale_fmt": "e8m0",
+        "weight_block_size": [1, MXFP4_BLOCK],
+        "pack_dim": 1,
+        "pack_factor": 2,
+    },
+}
+
+_STORE_META_BY_MODE = {"fp8": _FP8_STORE_META, "fp4": _FP4_STORE_META}
 
 
 def _download_root(checkpoint: str) -> Path:
@@ -166,7 +183,7 @@ def convert_checkpoint(
     quantize_experts: str | None = None,
 ) -> StoreIndex:
     root = _download_root(checkpoint)
-    if quantize_experts not in (None, "fp8"):
+    if quantize_experts not in (None, "fp8", "fp4"):
         raise ValueError(
             f"unsupported expert quantization mode {quantize_experts!r}"
         )
@@ -191,6 +208,7 @@ def convert_checkpoint(
 
     from moe_store.convert.cast_policy import (
         CastPolicy,
+        FP4ExpertQuantizer,
         FP8ExpertQuantizer,
         reject_already_quantized_source,
     )
@@ -203,7 +221,7 @@ def convert_checkpoint(
     from moe_store.registry.slots import member_slot_rank
 
     policy = CastPolicy.from_config(config, str(ckpt_dir))
-    if quantize_experts == "fp8":
+    if quantize_experts is not None:
         reject_already_quantized_source(config, policy.quant_info)
     expansion = V5Expansion(config, shards.spec)
     gpt_oss = GptOssExpansion(config, shards.spec)
@@ -243,10 +261,16 @@ def convert_checkpoint(
         quantizer = FP8ExpertQuantizer(
             expert_of, functools.partial(member_slot_rank, arch)
         )
+    elif quantize_experts == "fp4":
+        quantizer = FP4ExpertQuantizer(
+            expert_of, functools.partial(member_slot_rank, arch)
+        )
+    if quantizer is not None:
         names = quantizer.prepare(names, raw_spec)
         if quantizer.num_quantized_weights == 0:
             raise ValueError(
-                "FP8 expert quantization matched no routed expert weights"
+                f"{quantize_experts.upper()} expert quantization matched "
+                "no routed expert weights"
             )
 
     def spec_of(name: str) -> TensorSpec:
@@ -275,7 +299,11 @@ def convert_checkpoint(
         partition_size=partition_size,
         slot_rank=functools.partial(member_slot_rank, arch),
     )
-    store_meta = _FP8_STORE_META if quantize_experts == "fp8" else None
+    store_meta = (
+        _STORE_META_BY_MODE.get(quantize_experts)
+        if quantize_experts is not None
+        else None
+    )
     write_store(index, load, store_dir, store_meta=store_meta)
     return index
 
