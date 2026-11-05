@@ -56,6 +56,9 @@ class EngineOps:
     nvtx_phase: Callable = nullcontext
     route_ahead_ctx: Any | None = None
     v4_fp4_ext: Any | None = None
+    # device -> bool: hardware gate of the grouped DeepSeek-V4 FP4 MoE
+    # (SM120 + RTX_PRO_6000); unset means the grouped path stays off
+    v4_moe_sm120_pro6000_supported: Callable | None = None
 
 
 ops = EngineOps()

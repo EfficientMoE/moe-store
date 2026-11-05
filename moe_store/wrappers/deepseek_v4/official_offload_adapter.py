@@ -16,6 +16,7 @@ import torch
 import torch.nn.functional as F
 from safetensors import safe_open
 
+from ...hooks import ops
 from .vision_exp import should_skip_resident_load
 
 
@@ -208,10 +209,100 @@ def _expert_forward_native(x, bundle, swiglu_limit):
     )
 
 
+_TABLE_KEYS = (
+    "w1.weight",
+    "w1.scale",
+    "w3.weight",
+    "w3.scale",
+    "w2.weight",
+    "w2.scale",
+)
+
+
+def grouped_native_available(device=None) -> bool:
+    """Whether the grouped native MoE (``v4_moe_forward_sm120_pro6000``) may
+    run on ``device``.
+
+    Its kernels use sm_120a block-scaled MMA and are tuned for the RTX PRO
+    6000; the engine's SM120 + RTX_PRO_6000 hardware gate decides. Every other
+    device (or an engine without the gate) keeps the per-expert Path B
+    (``v4_expert_forward``: BF16 dequant + cuBLAS).
+    """
+    gate = ops.v4_moe_sm120_pro6000_supported
+    if gate is None:
+        return False
+    try:
+        ext = _load_native_fp4()
+    except Exception:
+        return False
+    return hasattr(ext, "v4_moe_forward_sm120_pro6000") and bool(gate(device))
+
+
+def _moe_forward_grouped(
+    x,
+    weights,
+    indices,
+    store,
+    layer_id,
+    start_idx,
+    end_idx,
+    n_routed,
+    limit,
+    act_block=128,
+):
+    """All routed experts of one layer in one native grouped call.
+
+    The host learns the active-expert set once (the offload store has to
+    fetch those experts); routing, FP8 activation quantisation, the
+    block-scaled FP4 GEMMs, SwiGLU and the weighted top-k sum run on device.
+    Returns the FP32 routed-expert sum [T, dim]. ``act_block`` is the
+    official FP8 activation-quantisation group (``fp8_block_size``: 128 for
+    V4-Flash, 32 for V4.1-Flash).
+    """
+    ext = _load_native_fp4()
+    local = (indices >= start_idx) & (indices < end_idx)
+    counts = torch.bincount(indices[local].flatten(), minlength=n_routed)
+    active = (counts[start_idx:end_idx] > 0).nonzero().flatten()
+    active = (active + start_idx).tolist()
+    store.prefetch(layer_id, active)
+    bundles = [store.get(layer_id, e) for e in active]
+    stream = torch.cuda.current_stream(x.device)
+    # host staging: the official generate path sets a CUDA default device
+    rows = torch.zeros(
+        (n_routed, len(_TABLE_KEYS)), dtype=torch.int64, device="cpu"
+    )
+    for e, bundle in zip(active, bundles):
+        for j, key in enumerate(_TABLE_KEYS):
+            t = bundle[key]
+            # the store may evict and reuse this memory on its copy stream
+            t.record_stream(stream)
+            rows[e, j] = t.data_ptr()
+    if not bundles:
+        return torch.zeros(x.shape, dtype=torch.float32, device=x.device)
+    table = rows.pin_memory().to(x.device, non_blocking=True)
+    ids = torch.where(local, indices, torch.full_like(indices, -1))
+    inter = bundles[0]["w1.weight"].shape[0]
+    return ext.v4_moe_forward_sm120_pro6000(
+        x.contiguous(),
+        ids.contiguous(),
+        weights.float().contiguous(),
+        table,
+        inter,
+        float(limit or 0.0),
+        int(act_block),
+    )
+
+
 def patch_moe_with_offload(model, store, official_module, use_native=None):
     use_native = resolve_use_native(use_native, store.device)
+    grouped = False
     if use_native:
         _load_native_fp4()
+        grouped = grouped_native_available(store.device)
+
+    # FP8 activation-quantisation group of the official linear() for FP4
+    # experts: 128 elements in V4-Flash, 32 in V4.1-Flash
+    act_block = int(getattr(official_module, "fp8_block_size", 128))
 
     def make_forward(moe, layer_id):
         gate = moe.gate
@@ -227,6 +318,23 @@ def patch_moe_with_offload(model, store, official_module, use_native=None):
             shape = x.size()
             x = x.view(-1, dim)
             weights, indices = gate(x, input_ids.flatten())
+            if grouped:
+                y = _moe_forward_grouped(
+                    x,
+                    weights,
+                    indices,
+                    store,
+                    layer_id,
+                    start_idx,
+                    end_idx,
+                    n_routed,
+                    swiglu_limit,
+                    act_block,
+                )
+                if official_module.world_size > 1:
+                    official_module.dist.all_reduce(y)
+                y += shared(x)
+                return y.type_as(x).view(shape)
             y = torch.zeros_like(x, dtype=torch.float32)
             counts = torch.bincount(
                 indices.flatten(), minlength=n_routed
