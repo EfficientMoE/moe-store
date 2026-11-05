@@ -10,6 +10,7 @@ from typing import Optional, Tuple
 import torch
 import torch.nn as nn
 
+from .. import fused_routing
 from .routing import (
     hash_route,
     indices_weights_to_masks,
@@ -89,6 +90,21 @@ class SyncDeepSeekV4MoEBlock(nn.Module):
         hidden_states: torch.Tensor,
         input_ids: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
+        if not self.is_hash:
+            fused = fused_routing.route(
+                hidden_states.reshape(-1, hidden_states.shape[-1]),
+                self.gate_weight,
+                self.num_experts_per_tok,
+                owner=self,
+                scoring="sqrtsoftplus",
+                bias=self.gate_bias,
+                renormalize=self.norm_topk_prob,
+                scaling=self.routed_scaling_factor,
+                eps=1e-20 if self.norm_topk_prob else 0.0,
+                weights_dtype=torch.float32,
+            )
+            if fused is not None:
+                return fused[0], fused[1]
         weights, indices = self.compute_routing(hidden_states, input_ids)
         return indices_weights_to_masks(indices, weights, self.num_expert)
 

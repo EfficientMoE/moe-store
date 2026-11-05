@@ -5,6 +5,8 @@ from typing import Optional
 import torch
 import torch.nn as nn
 
+from . import fused_routing
+
 try:
     from transformers.models.glm_moe_dsa.modeling_glm_moe_dsa import (
         GlmMoeDsaMLP,
@@ -74,6 +76,29 @@ class SyncGlmMoeDsaMoEBlock(nn.Module):
         topk_indices, topk_weights = self._route_tokens_to_experts(routed)
         return topk_indices, topk_weights, routed
 
+    def _route_fused(self, hidden_flat: torch.Tensor):
+        # Same grouped sigmoid noaux_tc selection as _route_tokens_to_experts
+        # (fp32 logits from bf16 operands on tensor cores), one launch.
+        # Subclasses with their own routing (HY-V3) keep it.
+        if type(self)._route is not SyncGlmMoeDsaMoEBlock._route:
+            return None
+        bias = self.gate.e_score_correction_bias
+        return fused_routing.route(
+            hidden_flat,
+            self.gate.weight,
+            self.top_k,
+            owner=self,
+            scoring="sigmoid",
+            bias=bias.to(hidden_flat.device),
+            n_group=self.n_group,
+            topk_group=self.topk_group,
+            renormalize=self.norm_topk_prob,
+            scaling=self.routed_scaling_factor,
+            eps=1e-20 if self.norm_topk_prob else 0.0,
+            weights_dtype=torch.float32,
+            return_logits=True,
+        )
+
     def _route_tokens_to_experts(self, router_logits: torch.Tensor):
         # Mirror of transformers GlmMoeDsaMoE.route_tokens_to_experts (grouped
         # sigmoid top-k). Inlined so offload routing stays correct on builds
@@ -113,20 +138,27 @@ class SyncGlmMoeDsaMoEBlock(nn.Module):
         hidden_flat = hidden_states.view(-1, hid)
         N = hidden_flat.shape[0]
 
-        topk_idx, topk_weights, router_logits = self._route(hidden_flat)
+        fused = self._route_fused(hidden_flat)
+        if fused is not None:
+            router_mask, routing_weights_mask, router_logits = fused
+        else:
+            topk_idx, topk_weights, router_logits = self._route(hidden_flat)
 
-        router_mask = torch.zeros(
-            N, self.num_experts, dtype=torch.bool, device=hidden_flat.device
-        )
-        router_mask.scatter_(1, topk_idx, True)
+            router_mask = torch.zeros(
+                N,
+                self.num_experts,
+                dtype=torch.bool,
+                device=hidden_flat.device,
+            )
+            router_mask.scatter_(1, topk_idx, True)
 
-        routing_weights_mask = torch.zeros(
-            N,
-            self.num_experts,
-            dtype=topk_weights.dtype,
-            device=hidden_flat.device,
-        )
-        routing_weights_mask.scatter_(1, topk_idx, topk_weights)
+            routing_weights_mask = torch.zeros(
+                N,
+                self.num_experts,
+                dtype=topk_weights.dtype,
+                device=hidden_flat.device,
+            )
+            routing_weights_mask.scatter_(1, topk_idx, topk_weights)
 
         if self.expert_executor is not None:
             self.expert_executor.dispatch_local(
