@@ -61,6 +61,13 @@ def test_parse_moe_param_reads_nested_text_config(
         ),
         ("model.layers.3.mlp.experts.0.gate_proj.weight", (None, None)),
         ("model.layers.3.ffn.shared_experts.w1.weight", (None, None)),
+        # dspark MTP keeps its own 128-expert MoE; it must NOT be offloaded.
+        ("mtp.0.ffn.experts.5.w1.weight", (None, None)),
+        ("mtp.2.ffn.experts.127.w2.scale", (None, None)),
+        # engram tables are not routed experts.
+        ("model.layers.1.engram.embed.weight", (None, None)),
+        # scale member of a real expert parses identically to its weight.
+        ("model.layers.5.ffn.experts.0.w1.scale", (5, 0)),
     ],
 )
 def test_parse_expert_id_uses_v4_layout(

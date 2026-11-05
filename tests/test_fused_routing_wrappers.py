@@ -145,7 +145,7 @@ def test_glm_moe_dsa_route(T, tie_heavy, n_group, topk_group):
     block.gate.e_score_correction_bias = bias.float()
     x = _inputs(T, 256, tie_heavy)
     mask, w, _ = block._route_fused(x)
-    idx, wts = block._route(x)
+    idx, wts, _ = block._route(x)
     ref_mask = torch.zeros_like(mask).scatter_(1, idx, True)
     ref_w = torch.zeros_like(w).scatter_(1, idx, wts)
     _same(mask, w, ref_mask, ref_w, strict=tie_heavy)

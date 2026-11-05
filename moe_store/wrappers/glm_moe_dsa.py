@@ -71,9 +71,10 @@ class SyncGlmMoeDsaMoEBlock(nn.Module):
         if isinstance(routed, tuple):
             # transformers >= 5.15 moved routing into GlmMoeDsaTopkRouter, which
             # returns (router_logits, topk_weights, topk_indices).
-            _, topk_weights, topk_indices = routed
-            return topk_indices, topk_weights
-        return self._route_tokens_to_experts(routed)
+            router_logits, topk_weights, topk_indices = routed
+            return topk_indices, topk_weights, router_logits
+        topk_indices, topk_weights = self._route_tokens_to_experts(routed)
+        return topk_indices, topk_weights, routed
 
     def _route_fused(self, hidden_flat: torch.Tensor):
         # Same grouped sigmoid noaux_tc selection as _route_tokens_to_experts
@@ -95,6 +96,7 @@ class SyncGlmMoeDsaMoEBlock(nn.Module):
             scaling=self.routed_scaling_factor,
             eps=1e-20 if self.norm_topk_prob else 0.0,
             weights_dtype=torch.float32,
+            return_logits=True,
         )
 
     def _route_tokens_to_experts(self, router_logits: torch.Tensor):
@@ -138,9 +140,9 @@ class SyncGlmMoeDsaMoEBlock(nn.Module):
 
         fused = self._route_fused(hidden_flat)
         if fused is not None:
-            router_mask, routing_weights_mask, _ = fused
+            router_mask, routing_weights_mask, router_logits = fused
         else:
-            topk_idx, topk_weights = self._route(hidden_flat)
+            topk_idx, topk_weights, router_logits = self._route(hidden_flat)
 
             router_mask = torch.zeros(
                 N,
@@ -164,7 +166,7 @@ class SyncGlmMoeDsaMoEBlock(nn.Module):
                 hidden_flat,
                 router_mask,
                 routing_weights_mask,
-                router_logits=None,
+                router_logits=router_logits,
             )
             expert_output = self.expert_executor.wait_dispatch_local()
         else:

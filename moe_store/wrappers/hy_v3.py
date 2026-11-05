@@ -73,7 +73,7 @@ class SyncHYV3MoEBlock(SyncGlmMoeDsaMoEBlock):
         # HYV3TopKRouter applies sigmoid, bias-for-selection, route_norm,
         # and router_scaling_factor internally and returns
         # (router_logits, topk_weights, topk_indices).
-        _, topk_weights, topk_indices = self.gate(
+        router_logits, topk_weights, topk_indices = self.gate(
             hidden_flat, self.e_score_correction_bias
         )
-        return topk_indices, topk_weights
+        return topk_indices, topk_weights, router_logits
